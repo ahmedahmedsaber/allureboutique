@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<template id="__bundler_thumbnail" data-bg-color="#0d0b08">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#0d0b08"/>
+    <text x="600" y="420" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="150" font-weight="700" letter-spacing="34" fill="#cfaa66">ALLURE</text>
+    <text x="600" y="480" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="40" font-weight="500" letter-spacing="30" fill="#9a8f7e">BOUTIQUE</text>
+  </svg>
+</template>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  ::selection{background:var(--gold);color:var(--ongold);}
+  :root{
+    --bg:#f4f0e9; --bg2:#fffdf9; --surface:#ece5d9; --ink:#1d1a16; --soft:#6f665b;
+    --line:rgba(29,26,22,0.12); --hairline:rgba(154,123,62,0.45);
+    --gold:#9a7b3e; --gold2:#b8964e; --ongold:#fffdf9;
+    --goldgrad:linear-gradient(135deg,#c8a662,#9a7b3e); --imgshade:rgba(29,26,22,0.05);
+    --headerbg:rgba(244,240,233,0.82);
+  }
+  [data-theme="dark"]{
+    --bg:#0d0b08; --bg2:#15110c; --surface:#1b1610; --ink:#f1ebdf; --soft:#9a8f7e;
+    --line:rgba(208,176,112,0.16); --hairline:rgba(207,170,102,0.5);
+    --gold:#cfaa66; --gold2:#dcbd7a; --ongold:#15110c;
+    --goldgrad:linear-gradient(135deg,#e3c585,#b78f47); --imgshade:rgba(0,0,0,0.28);
+    --headerbg:rgba(13,11,8,0.78);
+  }
+  @keyframes auFade{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:none;}}
+  @keyframes auMarquee{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+</style>
+</helmet>
+
+<div data-theme="{{ theme }}" style="min-height:100vh;background:var(--bg);color:var(--ink);font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;transition:background .5s ease,color .5s ease;">
+
+  <!-- ===================== HEADER ===================== -->
+  <header style="position:sticky;top:0;z-index:50;background:var(--headerbg);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--line);">
+    <div style="max-width:1320px;margin:0 auto;padding:18px 40px;display:flex;align-items:center;justify-content:space-between;gap:24px;">
+      <button onClick="{{ goHome }}" style="background:none;border:none;cursor:pointer;text-align:left;padding:0;line-height:1;">
+        <div style="font-size:24px;font-weight:700;letter-spacing:7px;color:var(--gold);">ALLURE</div>
+        <div style="font-size:9px;font-weight:500;letter-spacing:6px;color:var(--soft);margin-top:5px;padding-left:2px;">BOUTIQUE</div>
+      </button>
+
+      <nav style="display:flex;align-items:center;gap:40px;">
+        <button onClick="{{ goShop }}" style="background:none;border:none;cursor:pointer;font-size:12px;letter-spacing:2.5px;font-weight:500;color:var(--ink);padding:6px 0;">SHOP</button>
+        <button onClick="{{ goAbout }}" style="background:none;border:none;cursor:pointer;font-size:12px;letter-spacing:2.5px;font-weight:500;color:var(--ink);padding:6px 0;">ABOUT</button>
+        <button onClick="{{ goShop }}" style="background:none;border:none;cursor:pointer;font-size:12px;letter-spacing:2.5px;font-weight:500;color:var(--ink);padding:6px 0;">CONTACT</button>
+      </nav>
+
+      <div style="display:flex;align-items:center;gap:18px;">
+        <button onClick="{{ toggleTheme }}" title="Toggle theme" style="display:flex;align-items:center;gap:8px;background:none;border:1px solid var(--line);border-radius:100px;padding:6px 12px;cursor:pointer;color:var(--ink);">
+          <span style="font-size:13px;">{{ themeIcon }}</span>
+          <span style="font-size:10px;letter-spacing:2px;font-weight:600;color:var(--soft);">{{ themeLabel }}</span>
+        </button>
+        <span style="font-size:13px;color:var(--soft);cursor:pointer;font-family:'Cormorant Garamond',serif;">عربى</span>
+        <span style="font-size:17px;color:var(--ink);cursor:pointer;">⌕</span>
+        <span style="font-size:15px;color:var(--ink);cursor:pointer;">♡</span>
+        <span style="position:relative;font-size:15px;color:var(--ink);cursor:pointer;">⛂
+          <sc-if value="{{ hasBag }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;top:-8px;right:-9px;background:var(--gold);color:var(--ongold);font-size:9px;font-weight:700;min-width:15px;height:15px;border-radius:100px;display:flex;align-items:center;justify-content:center;padding:0 3px;">{{ bagCount }}</span></sc-if>
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================== HOME ===================== -->
+  <sc-if value="{{ showHome }}" hint-placeholder-val="{{ true }}">
+  <main style="animation:auFade .6s ease both;">
+
+    <!-- HERO -->
+    <section style="position:relative;min-height:660px;display:flex;align-items:center;overflow:hidden;border-bottom:1px solid var(--line);">
+      <div style="position:absolute;inset:0;background:linear-gradient(115deg,#2a2521 0%,#4a3f31 45%,#b89a6a 100%);"></div>
+      <div style="position:absolute;inset:0;background:linear-gradient(90deg,rgba(8,6,4,0.78) 0%,rgba(8,6,4,0.42) 48%,rgba(8,6,4,0.12) 100%);"></div>
+      <span style="position:absolute;right:30px;bottom:18px;font-family:ui-monospace,'SF Mono',monospace;font-size:9px;letter-spacing:3px;color:rgba(255,255,255,0.4);">EDITORIAL HERO · 1600×660 · DROP IMAGE</span>
+      <div style="position:relative;max-width:1320px;margin:0 auto;padding:0 40px;width:100%;">
+        <div style="max-width:620px;">
+          <div style="font-size:11px;letter-spacing:5px;color:#e6cd97;margin-bottom:26px;">NEW CAIRO · VALUE 2 MALL</div>
+          <h1 style="font-family:'Cormorant Garamond',serif;font-weight:500;font-size:76px;line-height:0.98;color:#fbf8f2;margin:0;letter-spacing:-0.5px;">Be different,<br><em style="font-style:italic;font-weight:400;">anytime anywhere.</em></h1>
+          <p style="font-size:16px;line-height:1.7;color:rgba(251,248,242,0.78);max-width:420px;margin:30px 0 0;">A curated house of bags, sunglasses, fine jewelry and watches — every piece handpicked, every detail authentic.</p>
+          <div style="display:flex;gap:16px;margin-top:40px;flex-wrap:wrap;">
+            <button onClick="{{ goShop }}" style="background:var(--goldgrad);color:#1d1610;border:none;padding:16px 34px;font-size:12px;letter-spacing:2.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:10px;">SHOP THE COLLECTION →</button>
+            <button onClick="{{ goAbout }}" style="background:rgba(255,255,255,0.06);color:#fbf8f2;border:1px solid rgba(255,255,255,0.35);padding:16px 30px;font-size:12px;letter-spacing:2.5px;font-weight:600;cursor:pointer;backdrop-filter:blur(4px);">OUR STORY</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MARQUEE TRUST STRIP -->
+    <section style="background:var(--bg2);border-bottom:1px solid var(--line);overflow:hidden;padding:18px 0;">
+      <div style="display:flex;width:max-content;animation:auMarquee 28s linear infinite;">
+        <div style="display:flex;align-items:center;gap:0;">{{ marquee }}</div>
+        <div style="display:flex;align-items:center;gap:0;">{{ marquee }}</div>
+      </div>
+    </section>
+
+    <!-- SHOP BY CATEGORY -->
+    <section style="max-width:1320px;margin:0 auto;padding:96px 40px 40px;">
+      <div style="text-align:center;margin-bottom:54px;">
+        <div style="font-size:11px;letter-spacing:5px;color:var(--gold);margin-bottom:16px;">FIND YOUR PERFECT PIECE</div>
+        <h2 style="font-family:'Cormorant Garamond',serif;font-weight:500;font-size:52px;margin:0;letter-spacing:-0.5px;">Shop by Category</h2>
+        <div style="width:64px;height:1px;background:var(--hairline);margin:22px auto 0;"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:18px;">
+        <sc-for list="{{ cats }}" as="c" hint-placeholder-count="4">
+          <button onClick="{{ c.open }}" style="position:relative;border:none;padding:0;cursor:pointer;aspect-ratio:3/4;overflow:hidden;background:var(--surface);text-align:left;display:block;">
+            <div style="position:absolute;inset:0;background:{{ c.bg }};transition:transform .7s ease;"></div>
+            <div style="position:absolute;inset:0;background:linear-gradient(to top,rgba(8,6,4,0.72),rgba(8,6,4,0.05) 55%);"></div>
+            <span style="position:absolute;left:14px;top:14px;font-family:ui-monospace,monospace;font-size:8px;letter-spacing:2px;color:rgba(255,255,255,0.45);">{{ c.tag }}</span>
+            <div style="position:absolute;left:22px;bottom:22px;">
+              <div style="font-family:'Cormorant Garamond',serif;font-size:27px;font-weight:500;color:#fff;">{{ c.name }}</div>
+              <div style="font-size:10px;letter-spacing:2px;color:rgba(255,255,255,0.7);margin-top:5px;">{{ c.count }} →</div>
+            </div>
+          </button>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- FEATURED PIECES -->
+    <section style="max-width:1320px;margin:0 auto;padding:72px 40px 40px;">
+      <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:40px;">
+        <div>
+          <div style="font-size:11px;letter-spacing:5px;color:var(--gold);margin-bottom:14px;">CURATED THIS SEASON</div>
+          <h2 style="font-family:'Cormorant Garamond',serif;font-weight:500;font-size:46px;margin:0;letter-spacing:-0.5px;">Featured Pieces</h2>
+        </div>
+        <button onClick="{{ goShop }}" style="background:none;border:none;cursor:pointer;font-size:12px;letter-spacing:2px;color:var(--ink);font-weight:600;border-bottom:1px solid var(--gold);padding-bottom:5px;">VIEW ALL →</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:22px;">
+        <sc-for list="{{ featured }}" as="p" hint-placeholder-count="4">
+          <div style="cursor:pointer;" onClick="{{ p.open }}">
+            <div style="position:relative;aspect-ratio:3/4;overflow:hidden;background:var(--surface);">
+              <div style="position:absolute;inset:0;background:{{ p.bg }};"></div>
+              <span style="position:absolute;left:12px;bottom:11px;font-family:ui-monospace,monospace;font-size:8px;letter-spacing:2px;color:rgba(255,255,255,0.5);">{{ p.tag }}</span>
+              <div style="position:absolute;top:12px;right:12px;width:34px;height:34px;border-radius:100px;background:rgba(255,255,255,0.14);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;">♡</div>
+            </div>
+            <div style="padding-top:16px;">
+              <div style="font-size:10px;letter-spacing:2px;color:var(--gold);">{{ p.cat }}</div>
+              <div style="font-family:'Cormorant Garamond',serif;font-size:21px;font-weight:500;margin-top:6px;">{{ p.name }}</div>
+              <div style="font-size:13px;color:var(--soft);margin-top:8px;">{{ p.priceStr }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- EDITORIAL STORY + STATS -->
+    <section style="max-width:1320px;margin:0 auto;padding:96px 40px;">
+      <div style="display:grid;grid-template-columns:1fr 1.05fr;gap:0;align-items:stretch;background:var(--bg2);border:1px solid var(--line);">
+        <div style="padding:64px 56px;display:flex;flex-direction:column;justify-content:center;">
+          <div style="font-size:11px;letter-spacing:5px;color:var(--gold);margin-bottom:20px;">OUR STORY</div>
+          <h2 style="font-family:'Cormorant Garamond',serif;font-weight:500;font-size:44px;line-height:1.08;margin:0;letter-spacing:-0.5px;">A house built on<br>elegance & detail.</h2>
+          <p style="font-size:15px;line-height:1.8;color:var(--soft);margin:26px 0 0;">From Italian-inspired gold collections to contemporary accessories, every piece in our store is handpicked to help you express your unique style. Discover the difference when you shop at ALLURE Boutique.</p>
+          <div style="display:flex;gap:48px;margin:42px 0;padding:32px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);">
+            <div><div style="font-family:'Cormorant Garamond',serif;font-size:38px;font-weight:600;color:var(--gold);">1,800+</div><div style="font-size:10px;letter-spacing:2px;color:var(--soft);margin-top:4px;">PRODUCTS</div></div>
+            <div><div style="font-family:'Cormorant Garamond',serif;font-size:38px;font-weight:600;color:var(--gold);">16.8K</div><div style="font-size:10px;letter-spacing:2px;color:var(--soft);margin-top:4px;">FOLLOWERS</div></div>
+            <div><div style="font-family:'Cormorant Garamond',serif;font-size:38px;font-weight:600;color:var(--gold);">100%</div><div style="font-size:10px;letter-spacing:2px;color:var(--soft);margin-top:4px;">AUTHENTIC</div></div>
+          </div>
+          <button onClick="{{ goAbout }}" style="align-self:flex-start;background:none;border:1px solid var(--ink);color:var(--ink);padding:15px 30px;font-size:12px;letter-spacing:2.5px;font-weight:600;cursor:pointer;">READ OUR STORY →</button>
+        </div>
+        <div style="position:relative;min-height:560px;overflow:hidden;">
+          <div style="position:absolute;inset:0;background:linear-gradient(150deg,#d9c9b3,#9c8164);"></div>
+          <span style="position:absolute;left:18px;bottom:14px;font-family:ui-monospace,monospace;font-size:9px;letter-spacing:2px;color:rgba(255,255,255,0.5);">LIFESTYLE · STUDIO SHOT</span>
+          <div style="position:absolute;left:32px;bottom:36px;right:32px;background:rgba(15,12,8,0.62);backdrop-filter:blur(8px);padding:24px;border:1px solid rgba(255,255,255,0.12);">
+            <div style="color:#e6cd97;letter-spacing:3px;font-size:13px;">★★★★★</div>
+            <p style="font-family:'Cormorant Garamond',serif;font-style:italic;font-size:21px;color:#fbf8f2;margin:12px 0 10px;line-height:1.4;">"The most beautiful accessories I've ever owned."</p>
+            <div style="font-size:10px;letter-spacing:2px;color:rgba(255,255,255,0.65);">— A HAPPY CUSTOMER</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {{ newsletter }}
+    {{ footer }}
+  </main>
+  </sc-if>
+
+  <!-- ===================== SHOP ===================== -->
+  <sc-if value="{{ showShop }}" hint-placeholder-val="{{ false }}">
+  <main style="animation:auFade .5s ease both;">
+    <section style="border-bottom:1px solid var(--line);background:var(--bg2);">
+      <div style="max-width:1320px;margin:0 auto;padding:60px 40px 48px;text-align:center;">
+        <div style="font-size:11px;letter-spacing:4px;color:var(--soft);margin-bottom:14px;">HOME / SHOP</div>
+        <h1 style="font-family:'Cormorant Garamond',serif;font-weight:500;font-size:58px;margin:0;letter-spacing:-0.5px;">The Collection</h1>
+        <p style="font-size:15px;color:var(--soft);margin:16px 0 0;">{{ shopCount }} pieces, every one authenticated.</p>
+      </div>
+    </section>
+
+    <section style="max-width:1320px;margin:0 auto;padding:36px 40px 96px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-bottom:28px;border-bottom:1px solid var(--line);margin-bottom:40px;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <sc-for list="{{ chips }}" as="ch" hint-placeholder-count="5">
+            <button onClick="{{ ch.select }}" style="border:1px solid {{ ch.border }};background:{{ ch.bg }};color:{{ ch.fg }};padding:10px 22px;font-size:11px;letter-spacing:2px;font-weight:600;cursor:pointer;border-radius:100px;transition:all .25s;">{{ ch.label }}</button>
+          </sc-for>
+        </div>
+        <div style="font-size:11px;letter-spacing:2px;color:var(--soft);">SORT: FEATURED ▾</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:22px 22px;">
+        <sc-for list="{{ shopProducts }}" as="p" hint-placeholder-count="8">
+          <div style="cursor:pointer;" onClick="{{ p.open }}">
+            <div style="position:relative;aspect-ratio:3/4;overflow:hidden;background:var(--surface);">
+              <div style="position:absolute;inset:0;background:{{ p.bg }};"></div>
+              <span style="position:absolute;left:12px;bottom:11px;font-family:ui-monospace,monospace;font-size:8px;letter-spacing:2px;color:rgba(255,255,255,0.5);">{{ p.tag }}</span>
+              <div style="position:absolute;top:12px;right:12px;width:34px;height:34px;border-radius:100px;background:rgba(255,255,255,0.14);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;">♡</div>
+            </div>
+            <div style="padding-top:16px;">
+              <div style="font-size:10px;letter-spacing:2px;color:var(--gold);">{{ p.cat }}</div>
+              <div style="font-family:'Cormorant Garamond',serif;font-size:21px;font-weight:500;margin-top:6px;">{{ p.name }}</div>
+              <div style="font-size:13px;color:var(--soft);margin-top:8px;">{{ p.priceStr }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+    {{ footer }}
+  </main>
+  </sc-if>
+
+  <!-- ===================== PRODUCT DETAIL ===================== -->
+  <sc-if value="{{ showProduct }}" hint-placeholder-val="{{ false }}">
+  <main style="animation:auFade .5s ease both;">
+    <div style="max-width:1320px;margin:0 auto;padding:30px 40px 0;font-size:11px;letter-spacing:2px;color:var(--soft);">
+      <button onClick="{{ goShop }}" style="background:none;border:none;color:var(--soft);cursor:pointer;font-size:11px;letter-spacing:2px;padding:0;">SHOP</button> / <span style="color:var(--ink);">{{ current.name }}</span>
+    </div>
+    <section style="max-width:1320px;margin:0 auto;padding:28px 40px 80px;display:grid;grid-template-columns:1.15fr 1fr;gap:56px;align-items:start;">
+      <!-- gallery -->
+      <div style="display:grid;grid-template-columns:78px 1fr;gap:16px;">
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <sc-for list="{{ gallery }}" as="g" hint-placeholder-count="4">
+            <div style="aspect-ratio:1;background:{{ g.bg }};cursor:pointer;border:1px solid var(--line);"></div>
+          </sc-for>
+        </div>
+        <div style="position:relative;aspect-ratio:4/5;overflow:hidden;background:var(--surface);">
+          <div style="position:absolute;inset:0;background:{{ current.bg }};"></div>
+          <span style="position:absolute;left:16px;bottom:14px;font-family:ui-monospace,monospace;font-size:9px;letter-spacing:2px;color:rgba(255,255,255,0.5);">{{ current.tag }} · DROP IMAGE</span>
+        </div>
+      </div>
+      <!-- info -->
+      <div style="padding-top:8px;">
+        <div style="font-size:11px;letter-spacing:3px;color:var(--gold);">{{ current.cat }}</div>
+        <h1 style="font-family:'Cormorant Garamond',serif;font-weight:500;font-size:46px;margin:12px 0 0;line-height:1.05;letter-spacing:-0.5px;">{{ current.name }}</h1>
+        <div style="display:flex;align-items:center;gap:14px;margin-top:18px;">
+          <div style="font-size:22px;color:var(--ink);">{{ current.priceStr }}</div>
+          <span style="color:var(--gold);letter-spacing:2px;font-size:13px;">★★★★★</span>
+          <span style="font-size:12px;color:var(--soft);">(42)</span>
+        </div>
+        <p style="font-size:15px;line-height:1.8;color:var(--soft);margin:26px 0 0;">{{ current.desc }}</p>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--line);margin:30px 0;">
+          <div style="padding:16px 20px;border-right:1px solid var(--line);"><div style="font-size:9px;letter-spacing:2px;color:var(--soft);">MATERIAL</div><div style="font-size:13px;margin-top:5px;">{{ current.material }}</div></div>
+          <div style="padding:16px 20px;"><div style="font-size:9px;letter-spacing:2px;color:var(--soft);">CONDITION</div><div style="font-size:13px;margin-top:5px;">Pristine · Authenticated</div></div>
+        </div>
+
+        <div style="display:flex;gap:14px;align-items:center;margin-top:8px;">
+          <button onClick="{{ addToBag }}" style="flex:1;background:var(--goldgrad);color:var(--ongold);border:none;padding:18px;font-size:12px;letter-spacing:3px;font-weight:700;cursor:pointer;">ADD TO BAG</button>
+          <button style="width:56px;height:56px;border:1px solid var(--ink);background:none;color:var(--ink);font-size:17px;cursor:pointer;">♡</button>
+        </div>
+        <div style="display:flex;gap:24px;margin-top:28px;flex-wrap:wrap;">
+          <div style="font-size:11px;letter-spacing:1px;color:var(--soft);">✓ Complimentary gift wrap</div>
+          <div style="font-size:11px;letter-spacing:1px;color:var(--soft);">✓ Free delivery in Cairo</div>
+          <div style="font-size:11px;letter-spacing:1px;color:var(--soft);">✓ Lifetime authenticity</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- related -->
+    <section style="max-width:1320px;margin:0 auto;padding:0 40px 96px;">
+      <h2 style="font-family:'Cormorant Garamond',serif;font-weight:500;font-size:36px;margin:0 0 32px;">You may also like</h2>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:22px;">
+        <sc-for list="{{ related }}" as="p" hint-placeholder-count="4">
+          <div style="cursor:pointer;" onClick="{{ p.open }}">
+            <div style="position:relative;aspect-ratio:3/4;overflow:hidden;background:var(--surface);">
+              <div style="position:absolute;inset:0;background:{{ p.bg }};"></div>
+            </div>
+            <div style="padding-top:14px;">
+              <div style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:500;">{{ p.name }}</div>
+              <div style="font-size:13px;color:var(--soft);margin-top:6px;">{{ p.priceStr }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+    {{ footer }}
+  </main>
+  </sc-if>
+
+  <!-- ===================== ABOUT ===================== -->
+  <sc-if value="{{ showAbout }}" hint-placeholder-val="{{ false }}">
+  <main style="animation:auFade .5s ease both;">
+    <section style="position:relative;min-height:440px;display:flex;align-items:center;overflow:hidden;border-bottom:1px solid var(--line);">
+      <div style="position:absolute;inset:0;background:linear-gradient(120deg,#241f1a,#5a4a36 70%,#bca073);"></div>
+      <div style="position:absolute;inset:0;background:rgba(8,6,4,0.4);"></div>
+      <div style="position:relative;max-width:1320px;margin:0 auto;padding:0 40px;width:100%;text-align:center;">
+        <div style="font-size:11px;letter-spacing:5px;color:#e6cd97;margin-bottom:18px;">OUR STORY</div>
+        <h1 style="font-family:'Cormorant Garamond',serif;font-weight:500;font-size:64px;color:#fbf8f2;margin:0;letter-spacing:-0.5px;">About ALLURE Boutique</h1>
+        <p style="font-size:16px;color:rgba(251,248,242,0.8);max-width:560px;margin:24px auto 0;line-height:1.7;">Women's accessories, dedicated to helping you stay elegant. Be different, anytime anywhere.</p>
+      </div>
+    </section>
+
+    <section style="max-width:1100px;margin:0 auto;padding:90px 40px;text-align:center;">
+      <p style="font-family:'Cormorant Garamond',serif;font-size:30px;line-height:1.5;color:var(--ink);margin:0;font-weight:400;">Founded in New Cairo, ALLURE began with a simple belief — that <em style="font-style:italic;color:var(--gold);">true luxury</em> lives in the details. From Italian-inspired gold to contemporary silhouettes, every piece is handpicked to help you express your unique style.</p>
+    </section>
+
+    <section style="max-width:1320px;margin:0 auto;padding:0 40px 80px;display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;">
+      <div style="position:relative;aspect-ratio:4/3;overflow:hidden;">
+        <div style="position:absolute;inset:0;background:linear-gradient(150deg,#d9c9b3,#9c8164);"></div>
+        <span style="position:absolute;left:16px;bottom:12px;font-family:ui-monospace,monospace;font-size:9px;letter-spacing:2px;color:rgba(255,255,255,0.5);">BOUTIQUE INTERIOR</span>
+      </div>
+      <div>
+        <h2 style="font-family:'Cormorant Garamond',serif;font-weight:500;font-size:40px;margin:0;letter-spacing:-0.5px;">Handpicked, authenticated, yours.</h2>
+        <p style="font-size:15px;line-height:1.8;color:var(--soft);margin:22px 0 0;">Each item passes through our authentication studio before it reaches you. No replicas, no compromises — only pieces we'd wear ourselves.</p>
+        <div style="display:flex;gap:48px;margin-top:38px;">
+          <div><div style="font-family:'Cormorant Garamond',serif;font-size:40px;font-weight:600;color:var(--gold);">1,800+</div><div style="font-size:10px;letter-spacing:2px;color:var(--soft);margin-top:4px;">PRODUCTS</div></div>
+          <div><div style="font-family:'Cormorant Garamond',serif;font-size:40px;font-weight:600;color:var(--gold);">16.8K</div><div style="font-size:10px;letter-spacing:2px;color:var(--soft);margin-top:4px;">FOLLOWERS</div></div>
+          <div><div style="font-family:'Cormorant Garamond',serif;font-size:40px;font-weight:600;color:var(--gold);">100%</div><div style="font-size:10px;letter-spacing:2px;color:var(--soft);margin-top:4px;">AUTHENTIC</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section style="background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);">
+      <div style="max-width:1320px;margin:0 auto;padding:72px 40px;display:grid;grid-template-columns:repeat(3,1fr);gap:40px;">
+        <div><div style="font-size:26px;color:var(--gold);">✶</div><h3 style="font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:500;margin:14px 0 8px;">Curated Selection</h3><p style="font-size:14px;line-height:1.7;color:var(--soft);margin:0;">A tight edit of bags, sunglasses, jewelry and watches — nothing filler.</p></div>
+        <div><div style="font-size:26px;color:var(--gold);">✦</div><h3 style="font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:500;margin:14px 0 8px;">Verified Authentic</h3><p style="font-size:14px;line-height:1.7;color:var(--soft);margin:0;">Every piece authenticated in-house and guaranteed for life.</p></div>
+        <div><div style="font-size:26px;color:var(--gold);">❖</div><h3 style="font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:500;margin:14px 0 8px;">Concierge Service</h3><p style="font-size:14px;line-height:1.7;color:var(--soft);margin:0;">Personal styling and delivery across New Cairo and beyond.</p></div>
+      </div>
+    </section>
+
+    <section style="max-width:760px;margin:0 auto;padding:80px 40px;text-align:center;">
+      <div style="color:var(--gold);letter-spacing:4px;font-size:15px;">★★★★★</div>
+      <p style="font-family:'Cormorant Garamond',serif;font-style:italic;font-size:32px;line-height:1.4;margin:24px 0 18px;">"The most beautiful accessories I've ever owned. ALLURE is my first stop, every time."</p>
+      <div style="font-size:11px;letter-spacing:2px;color:var(--soft);">— A HAPPY CUSTOMER, NEW CAIRO</div>
+      <button onClick="{{ goShop }}" style="margin-top:40px;background:var(--goldgrad);color:var(--ongold);border:none;padding:17px 38px;font-size:12px;letter-spacing:3px;font-weight:700;cursor:pointer;">SHOP THE COLLECTION →</button>
+    </section>
+    {{ footer }}
+  </main>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;defaultTheme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;'light'|'dark'&quot;},&quot;showPrices&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;currency&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;EGP&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  state = { page:'home', theme:'light', cat:'All', pdp:0, bag:0 };
+
+  componentDidMount(){
+    const t = this.props.defaultTheme;
+    if (t === 'dark' || t === 'light') this.setState({ theme:t });
+  }
+
+  fmt(n){
+    const cur = this.props.currency || 'EGP';
+    if (this.props.showPrices === false) return 'Price on request';
+    return cur + ' ' + n.toLocaleString('en-US');
+  }
+
+  data(){
+    const P = [
+      {id:'mayfair',  name:'The Mayfair Tote',     cat:'Bags',       price:4200, material:'Black calf leather', tag:'BAG · 3:4',     bg:'linear-gradient(150deg,#3b3733,#1a1816)', desc:'A structured everyday tote in full-grain calf leather, finished with a softly polished gold clasp. Roomy enough for daily life, refined enough for the evening.'},
+      {id:'riviera',  name:'Riviera Cat-Eye',      cat:'Sunglasses', price:1850, material:'Tortoise acetate',   tag:'SUNGLASSES',    bg:'linear-gradient(150deg,#7a5c3a,#3c2c1b)', desc:'Hand-polished Italian acetate in a sculpted cat-eye, with gradient lenses offering full UV protection. Effortlessly cinematic.'},
+      {id:'lumiere',  name:'Lumiere Solitaire Ring',cat:'Jewelry',    price:9400, material:'18k gold · diamond',  tag:'RING',          bg:'linear-gradient(150deg,#e7d6b2,#c2a565)', desc:'A brilliant-cut centre stone set in a slender 18k gold band. Quiet, timeless, made to be worn forever.'},
+      {id:'cairo',    name:'Cairo Chain Necklace', cat:'Jewelry',    price:2600, material:'Gold vermeil',        tag:'NECKLACE',      bg:'linear-gradient(150deg,#dcc89c,#b59450)', desc:'A fluid rope chain in warm gold vermeil that catches the light with every movement. Layer it or wear it alone.'},
+      {id:'aurelie',  name:'Aurelie Shoulder Bag', cat:'Bags',       price:5100, material:'Camel suede',         tag:'BAG',           bg:'linear-gradient(150deg,#c4a982,#9c7e57)', desc:'A relaxed crescent shoulder bag in buttery camel suede, slung at the perfect length. Modern heritage in a single silhouette.'},
+      {id:'noir',     name:'Noir Aviator',         cat:'Sunglasses', price:1950, material:'Gold frame',          tag:'SUNGLASSES',    bg:'linear-gradient(150deg,#4a4540,#211e1b)', desc:'A classic aviator reimagined with a brushed gold frame and smoke lenses. A wardrobe constant.'},
+      {id:'sable',    name:'Sable Hoop Earrings',  cat:'Jewelry',    price:3200, material:'18k gold',            tag:'EARRINGS',      bg:'linear-gradient(150deg,#e3d0a6,#bd9a55)', desc:'Sculptural medium hoops in solid 18k gold, weighted to sit beautifully. The everyday luxury you never take off.'},
+      {id:'heritage', name:'Heritage Automatic',   cat:'Watches',    price:7800, material:'Gold · black dial',   tag:'WATCH',         bg:'linear-gradient(150deg,#b9bcbe,#86898c)', desc:'A 36mm automatic with a midnight dial and gold indices. Mechanical craft, dressed for any occasion.'},
+    ];
+    return P;
+  }
+
+  renderVals(){
+    const theme = this.state.theme;
+    const P = this.data();
+    const fmt = (n)=>this.fmt(n);
+    const open = (id)=>()=>{ const i=P.findIndex(p=>p.id===id); this.setState({page:'product', pdp: i<0?0:i}); window.scrollTo(0,0); };
+    const withOpen = (arr)=>arr.map(p=>({...p, priceStr:fmt(p.price), open:open(p.id)}));
+
+    const products = withOpen(P);
+    const featured = products.slice(0,4);
+
+    // categories
+    const catMeta = [
+      {name:'Bags',       count:'48', tag:'BAGS',       bg:'linear-gradient(150deg,#4a443d,#1c1916)'},
+      {name:'Sunglasses', count:'26', tag:'SUNGLASSES', bg:'linear-gradient(150deg,#6e533a,#2c2118)'},
+      {name:'Jewelry',    count:'112',tag:'JEWELRY',    bg:'linear-gradient(150deg,#e0cd9e,#b18f48)'},
+      {name:'Watches',    count:'19', tag:'WATCHES',    bg:'linear-gradient(150deg,#b9bcbe,#7e8184)'},
+    ];
+    const cats = catMeta.map(c=>({...c, count:c.count+' pieces', open:()=>{ this.setState({page:'shop', cat:c.name}); window.scrollTo(0,0); }}));
+
+    // shop filtering
+    const activeCat = this.state.cat;
+    const shopProducts = products.filter(p=> activeCat==='All' ? true : p.cat===activeCat);
+    const chipNames = ['All','Bags','Sunglasses','Jewelry','Watches'];
+    const chips = chipNames.map(name=>{
+      const on = name===activeCat;
+      return {
+        label: name==='All' ? 'All Pieces' : name,
+        active: on,
+        bg: on ? 'var(--ink)' : 'transparent',
+        fg: on ? 'var(--bg)' : 'var(--ink)',
+        border: on ? 'var(--ink)' : 'var(--line)',
+        select: ()=>this.setState({cat:name}),
+      };
+    });
+
+    // product detail
+    const current = { ...products[this.state.pdp] };
+    const gallery = [current, ...products.filter(p=>p.id!==current.id)].slice(0,4).map(p=>({bg:p.bg}));
+    const related = products.filter(p=>p.id!==current.id).slice(0,4);
+
+    const marquee = React.createElement(React.Fragment, null,
+      ['Authenticated Luxury','New Cairo · Value 2 Mall','Complimentary Gift Wrap','Free Delivery in Cairo','Handpicked Daily','Lifetime Authenticity'].map((t,i)=>
+        React.createElement('span',{key:i,style:{display:'inline-flex',alignItems:'center',whiteSpace:'nowrap'}},
+          React.createElement('span',{style:{fontSize:'11px',letterSpacing:'3px',color:'var(--soft)',padding:'0 30px',textTransform:'uppercase'}},t),
+          React.createElement('span',{style:{color:'var(--gold)',fontSize:'9px'}},'✦')
+        )
+      )
+    );
+
+    const newsletter = React.createElement('section',{style:{background:'var(--surface)'}},
+      React.createElement('div',{style:{maxWidth:'700px',margin:'0 auto',padding:'80px 40px',textAlign:'center'}},
+        React.createElement('div',{style:{fontSize:'11px',letterSpacing:'5px',color:'var(--gold)',marginBottom:'16px'}},'STAY IN TOUCH'),
+        React.createElement('h2',{style:{fontFamily:"'Cormorant Garamond',serif",fontWeight:500,fontSize:'40px',margin:'0 0 14px',letterSpacing:'-0.5px'}},'Be the first to know.'),
+        React.createElement('p',{style:{fontSize:'14px',color:'var(--soft)',margin:'0 0 28px'}},'New arrivals, private sales and styling notes — straight to your inbox.'),
+        React.createElement('div',{style:{display:'flex',gap:'0',maxWidth:'440px',margin:'0 auto',border:'1px solid var(--ink)'}},
+          React.createElement('input',{placeholder:'Your email address',style:{flex:1,border:'none',background:'transparent',padding:'15px 18px',fontSize:'13px',color:'var(--ink)',outline:'none',fontFamily:'inherit'}}),
+          React.createElement('button',{style:{background:'var(--ink)',color:'var(--bg)',border:'none',padding:'0 26px',fontSize:'11px',letterSpacing:'2px',fontWeight:700,cursor:'pointer'}},'SUBSCRIBE')
+        )
+      )
+    );
+
+    const footCol = (title, items)=>React.createElement('div',null,
+      React.createElement('div',{style:{fontSize:'10px',letterSpacing:'2px',color:'var(--gold)',marginBottom:'18px'}},title),
+      items.map((it,i)=>React.createElement('div',{key:i,style:{fontSize:'13px',color:'var(--soft)',marginBottom:'11px',cursor:'pointer'}},it))
+    );
+    const footer = React.createElement('footer',{style:{background:'var(--bg2)',borderTop:'1px solid var(--line)'}},
+      React.createElement('div',{style:{maxWidth:'1320px',margin:'0 auto',padding:'72px 40px 40px',display:'grid',gridTemplateColumns:'1.4fr 1fr 1fr 1fr',gap:'40px'}},
+        React.createElement('div',null,
+          React.createElement('div',{style:{fontSize:'24px',fontWeight:700,letterSpacing:'7px',color:'var(--gold)'}},'ALLURE'),
+          React.createElement('div',{style:{fontSize:'9px',fontWeight:500,letterSpacing:'6px',color:'var(--soft)',marginTop:'5px'}},'BOUTIQUE'),
+          React.createElement('p',{style:{fontSize:'13px',lineHeight:1.7,color:'var(--soft)',margin:'22px 0 0',maxWidth:'260px'}},'A curated house of luxury accessories. Be different, anytime anywhere.'),
+          React.createElement('div',{style:{fontSize:'12px',color:'var(--soft)',marginTop:'20px',letterSpacing:'1px'}},'Value 2 Mall · New Cairo')
+        ),
+        footCol('SHOP',['Bags','Sunglasses','Jewelry','Watches','New Arrivals']),
+        footCol('HOUSE',['Our Story','Authentication','Concierge','Visit Us']),
+        footCol('SUPPORT',['Shipping','Returns','Care Guide','Contact'])
+      ),
+      React.createElement('div',{style:{maxWidth:'1320px',margin:'0 auto',padding:'24px 40px',borderTop:'1px solid var(--line)',display:'flex',justifyContent:'space-between',flexWrap:'wrap',gap:'12px'}},
+        React.createElement('div',{style:{fontSize:'11px',letterSpacing:'1px',color:'var(--soft)'}},'© 2026 ALLURE Boutique. All rights reserved.'),
+        React.createElement('div',{style:{fontSize:'11px',letterSpacing:'2px',color:'var(--soft)'}},'INSTAGRAM · TIKTOK · WHATSAPP')
+      )
+    );
+
+    return {
+      theme,
+      themeLabel: theme==='light' ? 'IVORY' : 'NOIR',
+      themeIcon: theme==='light' ? '☾' : '☀',
+      toggleTheme: ()=>this.setState(s=>({theme: s.theme==='light'?'dark':'light'})),
+      goHome:()=>{ this.setState({page:'home'}); window.scrollTo(0,0); },
+      goShop:()=>{ this.setState({page:'shop', cat:'All'}); window.scrollTo(0,0); },
+      goAbout:()=>{ this.setState({page:'about'}); window.scrollTo(0,0); },
+      showHome: this.state.page==='home',
+      showShop: this.state.page==='shop',
+      showProduct: this.state.page==='product',
+      showAbout: this.state.page==='about',
+      products, featured, cats,
+      shopProducts, chips, shopCount: shopProducts.length,
+      current, gallery, related,
+      addToBag: ()=>this.setState(s=>({bag:s.bag+1})),
+      bagCount: this.state.bag, hasBag: this.state.bag>0,
+      marquee, newsletter, footer,
+    };
+  }
+}
+</script>
+</body>
+</html>
