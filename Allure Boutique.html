@@ -2,7 +2,8 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Bundled Page</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Allure Boutique</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #0d0b08; display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
@@ -10,6 +11,56 @@
     #__bundler_thumbnail { position: fixed; inset: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #0d0b08; z-index: 9999; }
     #__bundler_thumbnail svg { width: 100%; height: 100%; object-fit: contain; }
     #__bundler_placeholder { color: #999; font-size: 14px; }
+  </style>
+  <style id="au-responsive">
+    @media(max-width:768px){
+      header > div { padding:14px 16px !important; }
+      header nav { display:none !important; }
+      [style*="font-size:76px"] { font-size:42px !important; line-height:1.05 !important; }
+      [style*="font-size:64px"] { font-size:38px !important; }
+      [style*="font-size:58px"] { font-size:36px !important; }
+      [style*="font-size:52px"] { font-size:34px !important; }
+      [style*="font-size:46px"] { font-size:30px !important; }
+      [style*="font-size:44px"] { font-size:28px !important; }
+      [style*="font-size:40px"] { font-size:26px !important; }
+      [style*="font-size:32px"] { font-size:24px !important; }
+      [style*="font-size:30px"] { font-size:22px !important; }
+      [style*="grid-template-columns:repeat(4,1fr)"] { grid-template-columns:repeat(2,1fr) !important; gap:12px !important; }
+      [style*="grid-template-columns:1.15fr 1fr"] { grid-template-columns:1fr !important; gap:28px !important; }
+      [style*="grid-template-columns:1fr 1.05fr"] { grid-template-columns:1fr !important; }
+      [style*="grid-template-columns:repeat(3,1fr)"] { grid-template-columns:1fr !important; }
+      [style*="grid-template-columns:1fr 1fr"] { grid-template-columns:1fr !important; }
+      [style*="grid-template-columns:1.4fr 1fr 1fr 1fr"] { grid-template-columns:1fr 1fr !important; gap:24px !important; padding:48px 20px 32px !important; }
+      [style*="grid-template-columns:78px 1fr"] { grid-template-columns:1fr !important; }
+      [style*="min-height:660px"] { min-height:480px !important; }
+      [style*="min-height:440px"] { min-height:280px !important; }
+      [style*="max-width:620px"] { max-width:100% !important; }
+      [style*="padding:18px 40px"] { padding:14px 16px !important; }
+      [style*="padding:96px 40px"] { padding:52px 20px 32px !important; }
+      [style*="padding:72px 40px 40px"] { padding:48px 20px 28px !important; }
+      [style*="padding:72px 40px;"] { padding:48px 20px !important; }
+      [style*="padding:90px 40px"] { padding:48px 20px !important; }
+      [style*="padding:0 40px 80px"] { padding:0 20px 56px !important; }
+      [style*="padding:60px 40px 48px"] { padding:36px 20px 24px !important; }
+      [style*="padding:36px 40px 96px"] { padding:24px 20px 60px !important; }
+      [style*="padding:28px 40px 80px"] { padding:20px 20px 56px !important; }
+      [style*="padding:0 40px;width:100%"] { padding:0 20px !important; }
+      [style*="padding:64px 56px"] { padding:36px 24px !important; }
+      [style*="padding:80px 40px;text-align:center"] { padding:52px 20px !important; }
+      [style*="padding:24px 40px;border-top"] { padding:20px 16px !important; flex-direction:column !important; align-items:center !important; }
+      [style*="padding:0 40px 96px"] { padding:0 20px 60px !important; }
+      [style*="gap:56px"] { gap:28px !important; }
+      [style*="gap:48px;margin:42px"] { gap:20px !important; padding:20px 0 !important; flex-wrap:wrap !important; }
+      [style*="gap:48px;margin-top:38px"] { gap:20px !important; flex-wrap:wrap !important; }
+      [style*="margin-top:40px;flex-wrap:wrap"] { flex-direction:column !important; gap:12px !important; }
+      [style*="margin-top:40px;flex-wrap:wrap"] > button { width:100% !important; justify-content:center !important; }
+      [style*="align-items:flex-end;justify-content:space-between;margin-bottom:40px"] { flex-direction:column !important; align-items:flex-start !important; gap:12px !important; }
+    }
+    @media(max-width:480px){
+      [style*="grid-template-columns:repeat(4,1fr)"] { gap:8px !important; }
+      [style*="grid-template-columns:1.4fr 1fr 1fr 1fr"] { grid-template-columns:1fr !important; }
+      [style*="font-size:76px"] { font-size:34px !important; }
+    }
   </style>
   <noscript>
     <style>#__bundler_loading { display: none; }</style>
