@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard — ALLURE Boutique</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="assets/logo-mark.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Amiri:ital,wght@0,400;0,700;1,400&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="admin.css">
+<script>try{var t=localStorage.getItem('au.theme');if(t)document.documentElement.setAttribute('data-theme',JSON.parse(t));var l=JSON.parse(localStorage.getItem('au.admin.lang')||'null');if(l==='ar'){document.documentElement.lang='ar';document.documentElement.dir='rtl';}}catch(e){}</script>
+</head>
+<body class="admin">
+  <div id="root"></div>
+  <div class="scrim" id="scrim" data-act="closeAll"></div>
+  <aside class="odrawer" id="drawer" aria-label="Order details"></aside>
+  <div class="toast" id="toast"></div>
+
+  <script src="assets/vendor/supabase-2.117.2.js"></script>
+  <script src="i18n.ar.js"></script>
+  <script src="i18n.js"></script>
+  <script src="config.js"></script>
+  <script src="api.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>

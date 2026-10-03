@@ -1,0 +1,28 @@
+# ALLURE Boutique — static web server (used by Railway via the Dockerfile)
+{
+	admin off
+	auto_https off
+}
+
+:{$PORT:8080} {
+	root * /srv
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+	# the dashboard should never be embedded or indexed
+	header /admin.html {
+		X-Frame-Options DENY
+		X-Robots-Tag "noindex, nofollow"
+	}
+	# pages and scripts revalidate on every visit so updates show up immediately; images are cached for a week
+	@pages path / /*.html /*.js /*.css
+	header @pages Cache-Control "no-cache"
+	header /assets/* Cache-Control "public, max-age=604800"
+
+	file_server
+}

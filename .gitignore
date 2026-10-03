@@ -1,0 +1,7 @@
+.DS_Store
+.thumbnail
+.env
+# raw design material (WhatsApp images, wireframe) stays on this computer
+Refrence/
+Wireframe/
+Logos/

@@ -1,0 +1,168 @@
+/* ALLURE Boutique — store content.
+   Edit this file to change products, categories, the season promo and store details.
+   Product `options` are set per product (the "admin" choices in the wireframe):
+   only the option groups a product lists are shown on its page. */
+
+window.STORE = {
+  currency: 'LE',
+  // Season promo banner on the home page. Set to null to show the regular hero instead.
+  promo: {
+    big: '50%', small: 'OFF',
+    kicker: 'SEASON SALE · LIMITED TIME',
+    title: 'Black Friday',
+    text: 'Our biggest edit of the year — handpicked bags, jewelry, sunglasses and watches at up to half price.',
+    cta: 'SHOP THE SALE',
+  },
+  // TODO(store owner): replace with the real numbers/links.
+  whatsapp: '201001111111',          // international format, no + or spaces (used for wa.me links)
+  instapay: '0100 111 1111',         // shown in the InstaPay / VC payment note
+  phone: '+20 100 111 1111',
+  email: 'hello@allureboutique.com',
+  address: 'Value 2 Mall, New Cairo, Cairo',
+  hours: 'Daily · 12:00 PM – 11:00 PM',
+  mapsUrl: 'https://maps.google.com/?q=Value+2+Mall+New+Cairo',
+  socials: {
+    facebook: 'https://facebook.com/',
+    instagram: 'https://instagram.com/',
+    tiktok: 'https://tiktok.com/',
+  },
+  visaFeeRate: 0.03,
+  delivery: { 'Cairo': 70, 'Giza': 80, 'Alexandria': 100, 'Other governorates': 120 },
+  promoCodes: { 'ALLURE10': 0.10 },
+};
+
+window.CATEGORIES = [
+  { name:'Jewelry',    tag:'JEWELRY',    bg:'linear-gradient(150deg,#e0cd9e,#b18f48)',
+    subs:['Necklaces','Bracelets','Bangles','Rings','Earrings','Earring Sets','Anklets','Sets'] },
+  { name:'Bags',       tag:'BAGS',       bg:'linear-gradient(150deg,#4a443d,#1c1916)',
+    subs:['Shoulder Bags','Cross Bags','Clutches','Wallets','Others'] },
+  { name:'Sunglasses', tag:'SUNGLASSES', bg:'linear-gradient(150deg,#6e533a,#2c2118)', subs:[] },
+  { name:'Watches',    tag:'WATCHES',    bg:'linear-gradient(150deg,#b9bcbe,#7e8184)', subs:[] },
+];
+
+const METALS = [ {name:'Pink', hex:'#e9a3b4'}, {name:'Gold', hex:'#d4a62a'}, {name:'Silver', hex:'#a9abad'} ];
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+window.PRODUCTS = [
+  // ── Jewelry
+  { id:'cairo', code:'101', name:'Cairo Chain Necklace', cat:'Jewelry', sub:'Necklaces', price:2600, oldPrice:3200,
+    material:'Gold-plated brass', size:'45 cm + 5 cm extender', color:'Gold', comesWith:['Gift box'],
+    desc:'A fluid rope chain that catches the light with every movement. Layer it or wear it alone.',
+    flags:{sale:true, best:true}, rating:4.8, reviews:42, popularity:96, addedAt:'2026-05-02', inStock:true,
+    bg:'linear-gradient(150deg,#dcc89c,#b59450)', options:{ colors:METALS } },
+  { id:'initial', code:'102', name:'Initial Pendant Necklace', cat:'Jewelry', sub:'Necklaces', price:1450,
+    material:'Gold-plated stainless steel', size:'42 cm', color:'Gold', comesWith:['Gift box'],
+    desc:'Your letter in a softly polished pendant — a personal piece made to be worn every day.',
+    flags:{new:true}, rating:4.9, reviews:31, popularity:90, addedAt:'2026-09-12', inStock:true,
+    bg:'linear-gradient(150deg,#e8d7b0,#c19d5c)', options:{ colors:METALS, letters:LETTERS } },
+  { id:'tennis', code:'103', name:'Riviera Tennis Bracelet', cat:'Jewelry', sub:'Bracelets', price:3900,
+    material:'Gold-plated silver · zircon', size:'17 cm', color:'Gold', comesWith:['Gift box','Polishing cloth'],
+    desc:'A continuous line of brilliant stones set in a slim, flexible band.',
+    flags:{best:true}, rating:4.7, reviews:27, popularity:88, addedAt:'2026-04-18', inStock:true,
+    bg:'linear-gradient(150deg,#eadcbc,#b99a5e)', options:{ colors:METALS } },
+  { id:'serpent-bangle', code:'104', name:'Serpent Cuff Bangle', cat:'Jewelry', sub:'Bangles', price:2750, oldPrice:3400,
+    material:'Gold-plated brass', size:'Free size', color:'Gold', comesWith:['Gift box'],
+    desc:'A sculpted serpent that wraps the wrist — bold, graceful and quietly powerful.',
+    flags:{sale:true}, rating:4.6, reviews:18, popularity:74, addedAt:'2026-03-09', inStock:true,
+    bg:'linear-gradient(150deg,#d8c08a,#a4823f)' },
+  { id:'lumiere', code:'105', name:'Lumiere Solitaire Ring', cat:'Jewelry', sub:'Rings', price:9400,
+    material:'18k gold · diamond', size:'Sizes 16–19', color:'Yellow gold', comesWith:['Certificate','Gift box'],
+    desc:'A brilliant-cut centre stone set in a slender 18k gold band. Quiet, timeless, made to be worn forever.',
+    flags:{best:true}, rating:5.0, reviews:12, popularity:84, addedAt:'2026-02-14', inStock:true,
+    bg:'linear-gradient(150deg,#e7d6b2,#c2a565)', options:{ ringSizes:[16,17,18,19] } },
+  { id:'trio', code:'106', name:'Stacking Ring Trio', cat:'Jewelry', sub:'Rings', price:1850,
+    material:'Gold-plated silver', size:'Sizes 17–19', color:'Gold', comesWith:['Gift box'],
+    desc:'Three fine bands to stack, mix and wear your way.',
+    flags:{new:true}, rating:4.5, reviews:9, popularity:61, addedAt:'2026-09-20', inStock:false,
+    bg:'linear-gradient(150deg,#f0e1c0,#c7a86b)', options:{ colors:METALS, ringSizes:[17,18,19] } },
+  { id:'sable', code:'107', name:'Sable Hoop Earrings', cat:'Jewelry', sub:'Earrings', price:3200, oldPrice:3900,
+    material:'18k gold-plated', size:'3 cm hoop', color:'Gold', comesWith:['Gift box'],
+    desc:'Sculptural medium hoops, weighted to sit beautifully. The everyday luxury you never take off.',
+    flags:{sale:true, best:true}, rating:4.8, reviews:36, popularity:92, addedAt:'2026-05-21', inStock:true,
+    bg:'linear-gradient(150deg,#e3d0a6,#bd9a55)', options:{ colors:METALS } },
+  { id:'pearl-set', code:'108', name:'Pearl Drop Earring Set', cat:'Jewelry', sub:'Earring Sets', price:2100,
+    material:'Freshwater pearl · gold-plated', size:'3 pairs', color:'Gold / Pearl', comesWith:['Gift box'],
+    desc:'Three pairs of pearl drops, from a delicate stud to an evening drop.',
+    flags:{new:true}, rating:4.7, reviews:14, popularity:70, addedAt:'2026-09-05', inStock:true,
+    bg:'linear-gradient(150deg,#efe6d6,#c9b48d)' },
+  { id:'anklet', code:'109', name:'Delicate Chain Anklet', cat:'Jewelry', sub:'Anklets', price:950,
+    material:'Gold-plated stainless steel', size:'23 cm + 4 cm extender', color:'Gold', comesWith:['Pouch'],
+    desc:'A whisper-fine chain with a tiny charm — made for summer and beyond.',
+    flags:{}, rating:4.4, reviews:11, popularity:55, addedAt:'2026-06-30', inStock:true,
+    bg:'linear-gradient(150deg,#e6d3a8,#b8944e)', options:{ colors:METALS } },
+  { id:'soleil-set', code:'110', name:'Soleil Jewelry Set', cat:'Jewelry', sub:'Sets', price:6800,
+    material:'Gold-plated brass · zircon', size:'Necklace 45 cm · Ring sizes 17–19', color:'Gold', comesWith:['Gift box'],
+    desc:'A sunburst motif across four pieces. Take the full set, or choose only the pieces you love — each is priced on its own.',
+    flags:{best:true, new:true}, rating:4.9, reviews:22, popularity:87, addedAt:'2026-09-15', inStock:true,
+    bg:'linear-gradient(150deg,#e9d49f,#b08a43)',
+    options:{ setParts:[ {name:'Necklace', price:2600}, {name:'Bracelet', price:1900}, {name:'Ring', price:1300}, {name:'Earrings', price:1500} ] } },
+
+  // ── Bags
+  { id:'aurelie', code:'401', name:'Aurelie Shoulder Bag', cat:'Bags', sub:'Shoulder Bags', price:5100,
+    material:'Suede leather', size:'20 × 12 cm', color:'Camel', comesWith:['Dust bag'],
+    desc:'A relaxed crescent shoulder bag in buttery suede, slung at the perfect length.',
+    flags:{best:true}, rating:4.8, reviews:25, popularity:89, addedAt:'2026-04-02', inStock:true,
+    bg:'linear-gradient(150deg,#c4a982,#9c7e57)',
+    options:{ colors:[{name:'Camel',hex:'#b58e5f'},{name:'Black',hex:'#1d1a16'},{name:'Burgundy',hex:'#6d1f2c'}], bagSizes:['16 × 9','20 × 12','24 × 16'] } },
+  { id:'mayfair', code:'402', name:'Mayfair Monogram Tote', cat:'Bags', sub:'Others', price:4200, oldPrice:5000,
+    material:'Coated canvas · leather trim', size:'20 × 40 cm', color:'Burgundy', comesWith:['3 straps','Box & dust bag'],
+    desc:'A structured everyday tote with a softly polished gold clasp. Roomy enough for daily life, refined enough for the evening.',
+    flags:{sale:true, new:true}, rating:4.7, reviews:33, popularity:94, addedAt:'2026-09-01', inStock:true,
+    bg:'linear-gradient(150deg,#5a2b31,#241314)',
+    options:{ colors:[{name:'Burgundy',hex:'#6d1f2c'},{name:'Black',hex:'#1d1a16'},{name:'Brown',hex:'#5b3b25'}], bagSizes:['20 × 12','24 × 16'] } },
+  { id:'luna', code:'403', name:'Luna Cross Bag', cat:'Bags', sub:'Cross Bags', price:3300,
+    material:'Calf leather', size:'18 × 12 cm', color:'Black', comesWith:['Adjustable strap','Dust bag'],
+    desc:'A compact crossbody with a curved flap — hands-free and polished.',
+    flags:{new:true}, rating:4.6, reviews:15, popularity:77, addedAt:'2026-09-18', inStock:true,
+    bg:'linear-gradient(150deg,#3b3733,#1a1816)',
+    options:{ colors:[{name:'Black',hex:'#1d1a16'},{name:'Ivory',hex:'#efe7d8'}] } },
+  { id:'etoile', code:'404', name:'Étoile Evening Clutch', cat:'Bags', sub:'Clutches', price:2400, oldPrice:2900,
+    material:'Satin · crystal clasp', size:'22 × 11 cm', color:'Champagne', comesWith:['Chain strap','Dust bag'],
+    desc:'A soft satin clutch with a jewelled clasp, made for the evening.',
+    flags:{sale:true}, rating:4.5, reviews:10, popularity:63, addedAt:'2026-03-27', inStock:true,
+    bg:'linear-gradient(150deg,#d9c6a3,#9f865f)' },
+  { id:'milano', code:'405', name:'Milano Zip Wallet', cat:'Bags', sub:'Wallets', price:1600,
+    material:'Saffiano leather', size:'19 × 10 cm', color:'Black', comesWith:['Box'],
+    desc:'A full-zip wallet with twelve card slots and a gold-tone pull.',
+    flags:{}, rating:4.6, reviews:19, popularity:66, addedAt:'2026-01-11', inStock:false,
+    bg:'linear-gradient(150deg,#4a443d,#1c1916)' },
+
+  // ── Sunglasses
+  { id:'riviera', code:'601', name:'Riviera Cat-Eye', cat:'Sunglasses', price:1850, oldPrice:2300,
+    material:'Tortoise acetate', size:'54 mm lens', color:'Tortoise', comesWith:['Case','Cleaning cloth'],
+    desc:'Hand-polished acetate in a sculpted cat-eye, with gradient lenses offering full UV protection.',
+    flags:{sale:true, best:true}, rating:4.7, reviews:29, popularity:91, addedAt:'2026-05-10', inStock:true,
+    bg:'linear-gradient(150deg,#7a5c3a,#3c2c1b)' },
+  { id:'noir', code:'602', name:'Noir Aviator', cat:'Sunglasses', price:1950,
+    material:'Metal frame', size:'58 mm lens', color:'Gold / Smoke', comesWith:['Case','Cleaning cloth'],
+    desc:'A classic aviator reimagined with a brushed gold frame and smoke lenses.',
+    flags:{best:true}, rating:4.6, reviews:21, popularity:80, addedAt:'2026-02-28', inStock:true,
+    bg:'linear-gradient(150deg,#4a4540,#211e1b)' },
+  { id:'capri', code:'603', name:'Capri Oval Sunglasses', cat:'Sunglasses', price:1700,
+    material:'Metal frame', size:'50 mm lens', color:'Rose', comesWith:['Case'],
+    desc:'Slim oval frames with softly tinted lenses — pure Riviera.',
+    flags:{new:true}, rating:4.5, reviews:8, popularity:68, addedAt:'2026-09-08', inStock:true,
+    bg:'linear-gradient(150deg,#b88a7d,#5e3f36)',
+    options:{ colors:[{name:'Rose',hex:'#c98b8b'},{name:'Gold',hex:'#d4a62a'},{name:'Black',hex:'#1d1a16'}] } },
+
+  // ── Watches
+  { id:'heritage', code:'801', name:'Heritage Automatic', cat:'Watches', price:7800,
+    material:'Stainless steel · gold tone', size:'36 mm case', color:'Gold · black dial', comesWith:['Box','Warranty card'],
+    desc:'A 36mm automatic with a midnight dial and gold indices. Mechanical craft, dressed for any occasion.',
+    flags:{best:true}, rating:4.9, reviews:17, popularity:85, addedAt:'2026-01-20', inStock:true,
+    bg:'linear-gradient(150deg,#b9bcbe,#86898c)' },
+  { id:'serpenti', code:'802', name:'Serpent Wrap Watch', cat:'Watches', price:4600, oldPrice:5400,
+    material:'Gold-plated steel', size:'Free size coil', color:'Gold', comesWith:['Box'],
+    desc:'A coiled bracelet watch that wraps the wrist twice — jewelry that tells time.',
+    flags:{sale:true, new:true}, rating:4.8, reviews:24, popularity:93, addedAt:'2026-09-10', inStock:true,
+    bg:'linear-gradient(150deg,#d8c08a,#8d7446)',
+    options:{ colors:[{name:'Gold',hex:'#d4a62a'},{name:'Silver',hex:'#a9abad'}] } },
+];
+
+window.SEED_REVIEWS = [
+  { name:'Nour H.',   rating:5, text:'The quality is so nice — it will not be the last time I order from ALLURE.', date:'2026-09-02' },
+  { name:'Mariam A.', rating:5, text:'My Mayfair tote arrived beautifully wrapped. Even better in person.', date:'2026-08-21' },
+  { name:'Salma K.',  rating:4, text:'Lovely initial necklace and very quick delivery to New Cairo.', date:'2026-08-14' },
+  { name:'Yasmin F.', rating:5, text:'The most beautiful accessories I have ever owned. The staff at Value 2 Mall are wonderful.', date:'2026-07-30' },
+  { name:'Habiba R.', rating:5, text:'Bought the Soleil set as a gift — she wears it every single day.', date:'2026-07-11' },
+];
