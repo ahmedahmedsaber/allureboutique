@@ -117,7 +117,7 @@ function shell(page, body) {
       <div class="brand"><img class="logo-light" src="assets/logo-light.png" alt="ALLURE Boutique"><img class="logo-dark" src="assets/logo-dark.png" alt="ALLURE Boutique"><span>${t('OWNER DASHBOARD')}</span></div>
       <nav class="adm-nav">${NAV.map(([k, l]) => `<button class="${page === k ? 'on' : ''}" data-act="go" data-href="#/${k}">${t(l)}${counts[k] ? `<span class="cnt${k === 'insights' ? ' live' : ''}">${k === 'insights' ? '● ' : ''}${counts[k]}</span>` : ''}</button>`).join('')}</nav>
       <div class="foot">
-        <a href="index.html" target="_blank" rel="noopener">${t('VIEW SHOP')} ↗</a>
+        <a href="index.html?preview=1" target="_blank" rel="noopener">${t('VIEW SHOP')} ↗</a>
         ${langBtn()}
         <button data-act="theme">${A.theme === 'dark' ? '☀ ' + t('IVORY MODE') : '☾ ' + t('NOIR MODE')}</button>
         <button data-act="signOut">${t('SIGN OUT')} · ${esc((A.profile.name || A.profile.email).split(' ')[0])}</button>

@@ -282,4 +282,8 @@ window.I18N_AR = Object.assign(window.I18N_AR, {
   'To make an account the owner, see SETUP.md step 4.': 'لجعل حساب ما مالكاً، راجع SETUP.md الخطوة 4.', 'SIGNING IN…': 'جارٍ الدخول…', 'Loading…': 'جارٍ التحميل…',
   'Add your Supabase URL and anon key to config.js — see SETUP.md.': 'أضف رابط Supabase والمفتاح العام إلى config.js — راجع SETUP.md.',
   'Facebook': 'فيسبوك', 'Instagram': 'إنستجرام', 'TikTok': 'تيك توك', 'Google': 'جوجل', 'WhatsApp': 'واتساب', 'X / Twitter': 'إكس / تويتر', 'Snapchat': 'سناب شات', 'Bing': 'بينج',
+  'Dashboard': 'لوحة التحكم', 'Back to dashboard': 'العودة للوحة التحكم',
+  'Owner preview — this is how customers see the shop.': 'معاينة المالك — هكذا يرى العملاء المتجر.',
+  'Owner preview — checkout is for customers.': 'معاينة المالك — إتمام الشراء للعملاء فقط.',
+  'Owners manage reviews in the dashboard.': 'المالك يدير التقييمات من لوحة التحكم.',
 });

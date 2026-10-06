@@ -40,6 +40,13 @@ const S = {
 function emptyFilter() { return { inStock: false, outStock: false, min: '', max: '', cats: [] }; }
 const save = (...keys) => keys.forEach(k => store.set(k, S[k]));
 
+// Owners belong in the dashboard. Signing in on the shop sends them there; the dashboard's
+// "View shop" opens a read-only preview (?preview=1) where customer-only pages stay closed.
+const PREVIEW = (() => { try { if (new URLSearchParams(location.search).get('preview') === '1') sessionStorage.setItem('au.preview', '1'); return sessionStorage.getItem('au.preview') === '1'; } catch (e) { return false; } })();
+const isOwner = () => !!(S.user && S.user.role === 'admin');
+const OWNER_BLOCKED = { account: '', orders: '#/orders', track: '#/orders', checkout: '', reset: '' };
+const toDashboard = (hash = '') => location.replace('admin.html' + hash);
+
 // ───────────────────────── helpers ─────────────────────────
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = n => Math.round(n || 0).toLocaleString('en-US') + ' ' + I18N.currency();
@@ -253,7 +260,7 @@ const emptyBlock = (title, text) => `<div class="empty" style="padding:88px 16px
 // ───────────────────────── header / menu / footer ─────────────────────────
 function renderHeader() {
   const dark = S.theme === 'dark';
-  $('#hdr').innerHTML = `<div class="hdr-inner">
+  $('#hdr').innerHTML = `${isOwner() ? `<div class="owner-bar">${t('Owner preview — this is how customers see the shop.')} <a href="admin.html">${t('Back to dashboard')} ${arrow()}</a></div>` : ''}<div class="hdr-inner">
     <div class="hdr-left">
       <button class="icon-btn" data-act="menu" aria-label="${t('Menu')}">${icon('menu')}</button>
       <button class="icon-btn" data-act="search" aria-label="${t('Search')}">${icon('search')}</button>
@@ -264,7 +271,7 @@ function renderHeader() {
     <div class="hdr-right">
       <button class="theme-btn" data-act="theme" title="${t('Toggle theme')}"><span class="t-ico">${dark ? '☀' : '☾'}</span><span class="t-lbl">${dark ? t('NOIR') : t('IVORY')}</span></button>
       <button class="lang" data-act="lang" lang="${isAr() ? 'en' : 'ar'}">${isAr() ? 'English' : 'عربي'}</button>
-      <button class="icon-btn" data-act="go" data-href="#/account" aria-label="${t('My account')}">${icon('user')}</button>
+      ${isOwner() ? `<a class="icon-btn" href="admin.html" aria-label="${t('Dashboard')}">${icon('user')}</a>` : `<button class="icon-btn" data-act="go" data-href="#/account" aria-label="${t('My account')}">${icon('user')}</button>`}
       <button class="icon-btn" data-act="go" data-href="#/favourites" aria-label="${t('Favourites')}">${icon('heart')}<span class="badge" id="favN"></span></button>
       <button class="icon-btn" data-act="go" data-href="#/cart" aria-label="${t('Cart')}">${icon('bag')}<span class="badge" id="cartN"></span></button>
     </div>
@@ -297,7 +304,7 @@ function renderMenu() {
       ${item(t('Home'), '#/')}${item(t('On Sale'), '#/shop/sale')}${item(t('Best Sellers'), '#/shop/best')}${item(t('New Arrivals'), '#/shop/new')}
       <button class="nav-item" data-act="menuCats">${t('Categories')}<span class="car${u.cats ? ' open' : ''}">▼</span></button>
       ${u.cats ? catBlock : ''}
-      ${item(S.user ? t('My Account') : t('Sign In'), '#/account')}${item(t('My Orders'), S.user ? '#/orders' : '#/track')}${item(t('Track an Order'), '#/track')}${item(t('Reviews'), '#/reviews')}
+      ${isOwner() ? `<a class="nav-item" href="admin.html">${t('Dashboard')}</a>` : item(S.user ? t('My Account') : t('Sign In'), '#/account') + item(t('My Orders'), S.user ? '#/orders' : '#/track') + item(t('Track an Order'), '#/track')}${item(t('Reviews'), '#/reviews')}
       ${item(t('Terms of Service'), '#/page/terms')}${item(t('Our Policy'), '#/page/policy')}${item(t('Shipping Policy'), '#/page/shipping')}
       ${item(t('Location'), '#/page/location')}${item(t('Contact Us'), '#/page/contact')}${item(t('About Us'), '#/page/about')}
       <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -381,7 +388,7 @@ function viewHome() {
     </section>
     <section class="band"><div class="sec" style="padding-bottom:72px">
       <div class="sec-head center"><div class="eyebrow">${t("WE'D LOVE TO HEAR FROM YOU")}</div><h2 class="h2">${t('Give us your feedback')}</h2></div>
-      <form class="fb" data-form="feedback">
+      ${isOwner() ? `<p class="login-note">${t('Owners manage reviews in the dashboard.')}</p>` : ''}<form class="fb" data-form="feedback"${isOwner() ? ' hidden' : ''}>
         <label>${t('RATE')}</label>
         <div class="stars-input">${[1, 2, 3, 4, 5].map(n => `<button type="button" class="${n <= fb.rating ? 'on' : ''}" data-act="star" data-n="${n}" aria-label="${t('{n} stars', { n })}">★</button>`).join('')}</div>
         <label for="fbText">${t('FEEDBACK')}</label>
@@ -612,7 +619,7 @@ function viewCart() {
         <div class="row"><span>${t('Discount')}</span><b>${tt.disc ? '−' + money(tt.disc) : '—'}</b></div>
         <div class="row"><span>${t('Delivery fees')}</span><b>${fees.length ? t('From {p}', { p: money(Math.min(...fees)) }) + ' · ' : ''}${t('free pickup')}</b></div>
         <div class="row total"><span>${t('Estimated total')}</span><b>${money(tt.sub - tt.disc)}</b></div>
-        <button class="btn btn-gold btn-block" style="margin-top:18px" data-act="go" data-href="#/checkout">${t('PROCEED TO CHECKOUT')} ${arrow()}</button>
+        ${isOwner() ? `<div class="login-note">${t('Owner preview — checkout is for customers.')}</div>` : `<button class="btn btn-gold btn-block" style="margin-top:18px" data-act="go" data-href="#/checkout">${t('PROCEED TO CHECKOUT')} ${arrow()}</button>`}
         <div style="text-align:center;margin-top:16px"><button class="link-btn" data-act="go" data-href="#/shop/all">${t('CONTINUE SHOPPING')}</button></div>
       </div>
     </section>`;
@@ -959,6 +966,7 @@ function route() {
   const h = location.hash;
   if (S.loading || /access_token=|error_description=|type=recovery/.test(h)) return viewLoading();
   const [a, b, c] = (h.replace(/^#\/?/, '') || '').split('/').map(decodeURIComponent);
+  if (isOwner() && a in OWNER_BLOCKED) { setTimeout(() => toDashboard(OWNER_BLOCKED[a]), 0); return viewLoading(); }
   switch (a) {
     case '': case undefined: return viewHome();
     case 'reviews': return viewHome();
@@ -1016,14 +1024,15 @@ async function onSession(session) {
   if (session) {
     try { S.user = await API.profile(); } catch (e) { S.user = null; }
     if (S.user && !S.user.email) S.user.email = session.user.email;
-    await loadOrders();
+    if (isOwner() && !PREVIEW) { toDashboard(); return; }
+    if (!isOwner()) await loadOrders();
     if (!orderChannel) orderChannel = API.subscribeOrders('my-orders', () => loadOrders());
   } else {
     S.user = null; S.orders = []; S.ui.profile = null;
     if (orderChannel) { API.sb.removeChannel(orderChannel); orderChannel = null; }
   }
-  setTracking(!(S.user && S.user.role === 'admin'));
-  renderMenu(); render();
+  setTracking(!isOwner());
+  renderHeader(); renderMenu(); render();
 }
 
 // ───────────────────────── events ─────────────────────────
@@ -1069,7 +1078,7 @@ const ACTIONS = {
   part: el => { const o = S.ui.pdp.opts, v = el.dataset.v; o.parts = o.parts || []; o.parts = o.parts.includes(v) ? o.parts.filter(x => x !== v) : [...o.parts, v]; S.ui.pdp.err = ''; render(); },
   qty: el => { const p = byId(S.ui.pdp.id); S.ui.pdp.qty = Math.max(1, Math.min(10, p ? p.stock : 10, S.ui.pdp.qty + +el.dataset.d)); render(); },
   addCart: () => { if (pdpAdd()) toast(t('Added to cart'), t('VIEW CART'), '#/cart'); },
-  buyNow: () => { if (pdpAdd()) location.hash = '#/checkout'; },
+  buyNow: () => { if (isOwner()) return toast(t('Owner preview — checkout is for customers.')); if (pdpAdd()) location.hash = '#/checkout'; },
   // cart
   cartQty: el => { const l = S.cart.find(x => x.key === el.dataset.key); if (!l) return; l.qty = Math.max(1, Math.min(10, l.qty + +el.dataset.d)); save('cart'); updateBadges(); render(); },
   cartRm: el => { S.cart = S.cart.filter(x => x.key !== el.dataset.key); save('cart'); updateBadges(); render(); },
