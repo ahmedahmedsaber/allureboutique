@@ -360,3 +360,10 @@ html[dir="rtl"] .rank .v,html[dir="rtl"] .tile .val{unicode-bidi:plaintext;}
   .act-filters .seg button{flex:1;padding:9px 6px;}
 }
 @media(max-width:1100px){ .opage{grid-template-columns:1fr;} }
+
+/* insights: share links */
+.share-row{display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid var(--line);}
+.share-row:last-of-type{border-bottom:none;}
+.share-row > div:first-child{flex:1;min-width:0;}
+.share-row .nm{font-size:13px;font-weight:600;}
+.share-row .url{font-size:12px;color:var(--soft);overflow-wrap:anywhere;}

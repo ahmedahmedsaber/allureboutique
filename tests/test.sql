@@ -61,7 +61,7 @@ select place_order('{"customer":{"name":"Someone Else","email":"other@example.co
 -- ═══ signed-in customer ═══
 reset role; set role authenticated; set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
 select pg_temp.ok(link_my_orders() = 0, 'nothing left to link at sign-in: the guest order joined the account on its own');
-select pg_temp.ok((select count(*) from orders) = 1, 'the other guest order (different email) stays private');
+select pg_temp.ok((select count(*) from orders) = 2, 'both guest orders with her phone joined her account (email not needed)');
 select pg_temp.expect_error($$update profiles set role = 'admin' where id = auth.uid()$$, 'permission denied');
 select pg_temp.expect_error($$update profiles set blocked = false where id = auth.uid()$$, 'permission denied');
 select pg_temp.expect_error($$select admin_customers()$$, 'FORBIDDEN');
@@ -83,8 +83,8 @@ insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) value
 select pg_temp.ok((select phone from profiles where id = '33333333-3333-3333-3333-333333333333') = '01027778888', 'sign-up phone saved as 01xxxxxxxxx');
 select pg_temp.ok((select count(*) from orders where user_id = '33333333-3333-3333-3333-333333333333') = 0, 'not linked before the email is confirmed');
 update auth.users set email_confirmed_at = now() where id = '33333333-3333-3333-3333-333333333333';
-select pg_temp.ok((select count(*) from orders where user_id = '33333333-3333-3333-3333-333333333333') = 2, 'confirming the email links both earlier guest orders');
-select pg_temp.ok((select user_id from orders where order_no = :'lg3_r'::jsonb->>'order_no') is null, 'same phone but another email stays a guest order');
+select pg_temp.ok((select count(*) from orders where user_id = '33333333-3333-3333-3333-333333333333') = 3, 'confirming the email links every earlier guest order with that phone');
+select pg_temp.ok((select user_id from orders where order_no = :'lg3_r'::jsonb->>'order_no') is not null, 'same phone with another email is linked too');
 select pg_temp.ok((select changes->-1->>'type' from orders where order_no = :'lg_r'::jsonb->>'order_no') = 'linked', 'linking is noted on the order');
 set role anon; set request.jwt.claim.sub = '';
 select place_order('{"customer":{"name":"Laila","email":"LAILA@example.com","phone":"01027778888"},"fulfil":"pickup","payment":"cod","items":[{"id":"noir","qty":1}]}'::jsonb) as r \gset lg4_
@@ -150,8 +150,8 @@ select pg_temp.ok((select count(*) from orders where id = :pid) = 0, 'order dele
 set role authenticated; set request.jwt.claim.sub = '99999999-9999-9999-9999-999999999999';
 -- customers & blocking
 select admin_customers() as c \gset c_
-select pg_temp.ok(jsonb_array_length(:'c_c'::jsonb->'accounts') = 4, 'customers: 4 accounts');
-select pg_temp.ok((select (x->>'orders')::int from jsonb_array_elements(:'c_c'::jsonb->'accounts') x where x->>'email' = 'nour@example.com') = 1, 'customers: Nour has 1 linked order');
+select pg_temp.ok(jsonb_array_length(:'c_c'::jsonb->'accounts') = 3 and not (:'c_c'::jsonb->'accounts')::text like '%owner@allure.com%', 'customers: 3 customer accounts, owner not listed');
+select pg_temp.ok((select (x->>'orders')::int from jsonb_array_elements(:'c_c'::jsonb->'accounts') x where x->>'email' = 'nour@example.com') = 2, 'customers: Nour has 2 linked orders');
 select pg_temp.ok(jsonb_array_length(:'c_c'::jsonb->'guests') >= 2, 'customers: guest buyers grouped by phone');
 select admin_update_customer('11111111-1111-1111-1111-111111111111', '{"blocked":true,"blocked_reason":"fake orders","name":"Nour H."}');
 select pg_temp.expect_error($$select admin_update_customer('99999999-9999-9999-9999-999999999999', '{"blocked":true}')$$, 'FORBIDDEN');
@@ -294,7 +294,7 @@ select pg_temp.expect_error($$select admin_save_categories('[{"name":"A","subs":
 
 -- ═══ guests: correct details; link by hand ═══
 select pg_temp.ok(admin_update_guest('01055500001', '{"name":"Set Buyer Fixed","email":"fixed@x.com"}') = 1, 'guest details corrected on their orders');
-select pg_temp.ok(admin_link_orders('33333333-3333-3333-3333-333333333333', '01027778888') = 1, 'owner links a guest order with a different email by hand');
+select pg_temp.ok(admin_link_orders('33333333-3333-3333-3333-333333333333', '01027778888') = 0, 'nothing left to link by hand');
 
 -- ═══ telegram: each staff member connects with one tap ═══
 reset role;
@@ -328,5 +328,21 @@ set role anon; set request.jwt.claim.sub = '';
 select place_order('{"customer":{"name":"Three","email":"t3@x.com","phone":"01055500012"},"fulfil":"pickup","payment":"cod","items":[{"id":"noir","qty":1}]}'::jsonb);
 reset role;
 select pg_temp.ok((select count(*) from net.calls where url like '%sendMessage%') = 1, 'paused staff stop getting order messages');
+
+
+-- ═══ staff are not customers; deleting accounts; one account per email ═══
+reset role; set role authenticated; set request.jwt.claim.sub = '99999999-9999-9999-9999-999999999999';
+select pg_temp.ok(not (admin_customers()->'accounts')::text like '%sara@allure.com%', 'staff are not listed as customers');
+select pg_temp.ok(not email_available('SARA@allure.com') and not email_available('owner@allure.com') and email_available('new@x.com'), 'emails already used (any case) are not available');
+select pg_temp.expect_error($$select admin_delete_user('99999999-9999-9999-9999-999999999999')$$, 'FORBIDDEN');
+select (select count(*) from orders where user_id = '33333333-3333-3333-3333-333333333333') as lo \gset
+select admin_delete_user('33333333-3333-3333-3333-333333333333');
+reset role;
+select pg_temp.ok(not exists (select 1 from auth.users where id = '33333333-3333-3333-3333-333333333333') and not exists (select 1 from profiles where id = '33333333-3333-3333-3333-333333333333'), 'customer account deleted');
+select pg_temp.ok((select count(*) from orders where customer->>'phone' = '01027778888' and user_id is null) >= :lo, 'their orders stay, as guest orders');
+select pg_temp.ok((select count(*) from activity where entity = 'profiles' and action = 'delete') = 1, 'deletion logged in Activity');
+set role authenticated; set request.jwt.claim.sub = '44444444-4444-4444-4444-444444444444';
+select pg_temp.expect_error($$select admin_delete_user('11111111-1111-1111-1111-111111111111')$$, 'FORBIDDEN');
+reset role;
 
 \echo ALL TESTS PASSED

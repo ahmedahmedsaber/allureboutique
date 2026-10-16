@@ -56,7 +56,9 @@ You can run `schema.sql` again later, for example after an update. It keeps all 
 
 Guests can always check out without an account. They track their order with the order number and their phone number on the **Track an Order** page.
 
-**Earlier guest orders join the account automatically.** When a customer creates an account, the shop finds their earlier guest orders and adds them to **My Orders**. The phone number **and** the email must both match, and the email must be confirmed, so nobody can claim someone else's orders with just a phone number.
+**Earlier guest orders join the account automatically.** When a customer creates an account and confirms their email, every earlier guest order placed with the same phone number is added to their **My Orders**, whatever email was used. Later guest orders with that phone number go straight into the account too.
+
+**One account per email and per phone number.** Sign-up refuses an email or phone number that already has an account, including the owner's and staff emails.
 
 ## 3b. Emails from "ALLURE Boutique" (Resend, free)
 
@@ -246,7 +248,9 @@ Customers see each status change on their **My Orders** page or the **Track an O
     - **Details & blocking:** edit their name, phone and a team-only note, or **Block** them. For guests, you can correct the name, email or phone on all their orders.
     - **Activity.**
   - **One account per phone number:** sign-up refuses a number that another account already uses (`010…`, `+20 10…` and `2010…` count as the same number). If two accounts shared a number before this update, both are marked **SHARED** in the list.
-  - **Guest orders join the account automatically** when the phone **and** the email match. This happens when the account is created, when the email is confirmed, and when a later guest order uses that phone and email. If the email differs, open the customer's **Details** tab and press **Add them to this account**.
+  - **Guest orders join the account automatically** by phone number. This happens when the email is confirmed and on every later guest order with that number.
+  - **Deleting an account:** go to the customer's **Details & blocking** tab and press **Delete account**. This needs the "Delete customer accounts" permission. The login, saved addresses and reviews are removed. Their orders stay in your records as guest orders. Staff accounts are deleted from the **Team** page (owner only).
+  - The owner and staff never appear in the Customers list.
   - A blocked account can't sign in to order and can't post reviews, and its phone number can't place orders, even as a guest. You can also block a phone number by itself.
 - **Pages:** edit the Returns & Exchange policy, Shipping, and Terms pages in English and Arabic, with a live preview.
 - **Export:** download an Excel file for any time range (to the minute). It has sheets for orders, order items, customers, products & sales, and reviews.
@@ -269,7 +273,11 @@ Customers see each status change on their **My Orders** page or the **Track an O
   - **Live now:** visitors online, active carts and people at checkout, updating instantly.
   - **History:** impressions (page views), unique visitors, a shopping funnel from visit to order, abandoned carts, traffic sources, devices, most visited pages, and product interest.
   - **Privacy:** visitors are counted anonymously with a random ID, with no names or phone numbers. Your own browsing while signed in as owner isn't counted.
-  - **Tracking where visitors come from:** when you share a link, add `?utm_source=instagram` (or `tiktok`, `whatsapp` …) after the address, e.g. `https://allureboutique.com/?utm_source=instagram`.
+  - **Tracking where visitors come from:** **Insights → Share links** gives ready links to copy, such as `https://www.allure-boutique.org/?utm_source=instagram`.
+    - Use the Instagram one in your bio and stories, the TikTok one on TikTok, and so on. You can also make your own (e.g. `?utm_source=flyer`).
+    - Visits from each link appear under **Where visitors come from**.
+    - Your own visits while signed in to the dashboard aren't counted. To test a link, open it in a private / incognito window.
+    - Use the `www.` address; the bare domain forwarding may drop the tag.
 
 ## Good to know
 

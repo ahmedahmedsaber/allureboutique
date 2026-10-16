@@ -164,9 +164,22 @@ const rid = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : Ma
 const VISITOR = store.get('vid', null) || (() => { const v = rid(); store.set('vid', v); return v; })();
 const DEVICE = innerWidth <= 600 ? 'mobile' : (matchMedia('(pointer: coarse)').matches && innerWidth <= 1100) ? 'tablet' : 'desktop';
 let pendingRef = '';
+// "?utm_source=instagram" (also accepted after the # by mistake): remembered for this visit, then removed
+// from the address bar so it isn't copied along when people share the page.
+const UTM = (() => {
+  const grab = q => { try { return new URLSearchParams(q).get('utm_source'); } catch (e) { return null; } };
+  const hi = location.hash.indexOf('?');
+  const src = grab(location.search) || (hi >= 0 ? grab(location.hash.slice(hi + 1)) : null);
+  if (src || hi >= 0) {
+    const sp = new URLSearchParams(location.search);
+    [...sp.keys()].filter(k => /^(utm_|fbclid$|gclid$)/.test(k)).forEach(k => sp.delete(k));
+    try { history.replaceState(null, '', location.pathname + (sp.toString() ? '?' + sp : '') + (hi >= 0 ? location.hash.slice(0, hi) : location.hash)); } catch (e) {}
+  }
+  return src ? src.toLowerCase().replace(/[^a-z0-9_.-]/g, '').slice(0, 40) : '';
+})();
+let utmPending = !!UTM;
 function refSource() {
-  const utm = new URLSearchParams(location.search).get('utm_source');
-  if (utm) return utm.toLowerCase().slice(0, 40);
+  if (UTM) return UTM;
   let host = ''; try { host = document.referrer ? new URL(document.referrer).hostname.replace(/^www\./, '') : ''; } catch (e) {}
   if (!host || host === location.hostname) return '';
   const known = [['instagram', 'instagram'], ['facebook', 'facebook'], ['fb.', 'facebook'], ['tiktok', 'tiktok'], ['google', 'google'], ['whatsapp', 'whatsapp'], ['wa.me', 'whatsapp'], ['bing', 'bing'], ['t.co', 'twitter'], ['snapchat', 'snapchat']];
@@ -175,7 +188,9 @@ function refSource() {
 }
 function sessionId() {
   const now = Date.now(), s = store.get('sid', null);
-  if (s && now - s.t < 30 * 60e3) { s.t = now; store.set('sid', s); return s.id; }
+  // a tagged link always starts a new visit, so it's counted even if the shop was open a minute ago
+  if (s && now - s.t < 30 * 60e3 && !utmPending) { s.t = now; store.set('sid', s); return s.id; }
+  utmPending = false;
   const n = { id: rid(), t: now }; store.set('sid', n); pendingRef = refSource(); return n.id;
 }
 const pathFor = h => {
@@ -1220,6 +1235,7 @@ const FORMS = {
       if (!(f.name || '').trim()) { a.msg = t('Please enter your name.'); return render(); }
       if (!PHONE_RE.test((f.phone || '').replace(/\s/g, ''))) { a.msg = t('Please enter a valid Egyptian mobile number (01xxxxxxxxx).'); return render(); }
       if (pw.length < 6) { a.msg = t('Your password needs at least 6 characters.'); return render(); }
+      try { if (!(await API.emailAvailable(f.email.trim()))) { a.msg = t('An account with this email already exists. Sign in, or use “Forgot password?”.'); return render(); } } catch (e) { /* checked again below */ }
       try { if (!(await API.phoneAvailable(f.phone))) { a.msg = t('This phone number already belongs to another account. Sign in to that account, or use a different number.'); return render(); } } catch (e) { /* the database checks again */ }
     }
     if (a.mode === 'signin' && !pw) { a.msg = t('Please enter your password.'); return render(); }
@@ -1228,6 +1244,8 @@ const FORMS = {
       if (a.mode === 'signin') { await API.auth.signIn(f.email.trim(), pw); toast(t('Welcome back')); }
       else if (a.mode === 'signup') {
         const r = await API.auth.signUp({ email: f.email.trim(), password: pw, name: f.name.trim(), phone: f.phone.replace(/\s/g, '') });
+        // Supabase answers "ok" without creating anything when the email is already registered
+        if (r.user && Array.isArray(r.user.identities) && !r.user.identities.length) { a.msg = t('An account with this email already exists. Sign in, or use “Forgot password?”.'); a.busy = false; return render(); }
         if (!r.session) a.ok = t('Almost there — we sent a confirmation link to {email}. Open it to activate your account.', { email: f.email.trim() });
         else toast(t('Welcome to ALLURE'));
       } else { await API.auth.resetPassword(f.email.trim()); a.ok = t('If an account exists for this email, a reset link is on its way.'); }

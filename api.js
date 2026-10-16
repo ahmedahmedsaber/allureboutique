@@ -104,6 +104,7 @@ const API = {
     return unwrap(await sb.from('profiles').update({ name, phone }).eq('id', id).select().single());
   },
   async phoneAvailable(phone) { return unwrap(await sb.rpc('phone_available', { p_phone: phone })); },
+  async emailAvailable(email) { return unwrap(await sb.rpc('email_available', { p_email: email })); },
 
   // ── saved addresses (own; staff with permission can pass a customer's id) ──
   async addresses(userId) {
@@ -215,6 +216,7 @@ const API = {
     // categories, guests, linking
     async saveCategories(cats, moves) { return unwrap(await sb.rpc('admin_save_categories', { p_cats: cats, p_moves: moves })); },
     async updateGuest(phone, p) { return unwrap(await sb.rpc('admin_update_guest', { p_phone: phone, p })); },
+    async deleteUser(id) { return unwrap(await sb.rpc('admin_delete_user', { p_id: id })); },
     async linkOrders(userId, phone) { return unwrap(await sb.rpc('admin_link_orders', { p_user: userId, p_phone: phone })); },
   },
 };

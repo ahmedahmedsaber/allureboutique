@@ -499,3 +499,17 @@ Object.assign(window.I18N_AR, {
   'discount %': 'نسبة الخصم', 'expiry': 'الانتهاء', 'label': 'الاسم', 'area': 'المنطقة', 'street': 'الشارع', 'building': 'المبنى', 'apartment': 'الشقة',
   'default address': 'العنوان الافتراضي', 'access': 'الصلاحيات', 'approved': 'منشور',
 });
+
+Object.assign(window.I18N_AR, {
+  'Account deleted': 'تم حذف الحساب', 'CONFIRM — DELETE ACCOUNT': 'تأكيد — حذف الحساب', 'DELETE ACCOUNT': 'حذف الحساب', 'Delete customer accounts': 'حذف حسابات العملاء',
+  'An account with this email already exists. Sign in, or use “Forgot password?”.': 'يوجد حساب بهذا البريد بالفعل. سجّل الدخول، أو استخدم “نسيت كلمة المرور؟”.',
+  'Removes the login, saved addresses and reviews. Their orders stay in your records as guest orders.': 'يحذف حساب الدخول والعناوين المحفوظة والتقييمات. تبقى طلباته في سجلاتك كطلبات ضيف.',
+  'Guest orders placed with this phone number are added to this account automatically.': 'طلبات الضيف بهذا الرقم تُضاف لهذا الحساب تلقائياً.',
+  'MAKE A CUSTOMER AGAIN': 'إرجاعه عميلاً', 'The Telegram bot isn’t connected yet.': 'بوت تيليجرام غير متصل بعد.',
+  'SHARE LINKS': 'روابط المشاركة', 'COPY': 'نسخ', 'Link copied': 'تم نسخ الرابط', 'Copy this link:': 'انسخ هذا الرابط:',
+  'Use these links instead of the plain shop address. Visits from them appear under “Where visitors come from”.': 'استخدم هذه الروابط بدلاً من عنوان المتجر العادي. الزيارات منها تظهر في “من أين يأتي الزوار”.',
+  'Instagram (bio, stories, posts)': 'إنستجرام (البايو، الستوري، المنشورات)', 'WhatsApp (status, chats)': 'واتساب (الحالة، المحادثات)', 'Google Maps / Google profile': 'خرائط جوجل / صفحة جوجل',
+  'Your own (e.g. a flyer or an influencer)': 'رابط خاص (مثلاً منشور ورقي أو مؤثر)', 'e.g. flyer': 'مثلاً flyer',
+  'Your own visits while signed in to this dashboard are not counted. To test a link, open it in a private / incognito window.': 'زياراتك أثناء تسجيل الدخول للوحة لا تُحتسب. لتجربة رابط، افتحه في نافذة خاصة (التصفح المتخفي).',
+  '{who} deleted the account of {name}': '{who} حذف حساب {name}',
+});

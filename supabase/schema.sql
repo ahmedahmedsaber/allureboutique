@@ -1007,6 +1007,7 @@ begin
              coalesce(sum(o.total - o.refunded) filter (where o.status not in ('cancelled')), 0) as spent,
              max(o.created_at) as last_order
       from public.profiles p left join public.orders o on o.user_id = p.id
+      where p.role = 'customer'                                   -- the owner and staff are on the Team page
       group by p.id) t),
     'guests', (select coalesce(jsonb_agg(t order by t.last_order desc), '[]'::jsonb) from (
       select o.customer->>'phone' as phone,
@@ -1067,7 +1068,7 @@ begin
   return p_blocked;
 end $$;
 
--- Guest orders join an account when BOTH the phone and the (confirmed) email match.
+-- Guest orders join an account automatically when the phone number matches (one account per phone).
 -- Runs on its own: when an account is created or confirmed, when its phone changes, and when a guest
 -- order comes in for a phone + email that already has an account. The shop also calls link_my_orders() at sign-in.
 create or replace function public.link_orders_for(p_user uuid)
@@ -1080,7 +1081,7 @@ begin
   if coalesce(ph, '') = '' then return 0; end if;
   update public.orders set user_id = p_user,
          changes = changes || jsonb_build_array(jsonb_build_object('at', now(), 'type', 'linked', 'note', ''))
-  where user_id is null and public.norm_phone(customer->>'phone') = ph and lower(customer->>'email') = lower(em);
+  where user_id is null and public.norm_phone(customer->>'phone') = ph;
   get diagnostics n = row_count;
   return n;
 end $$;
@@ -1112,14 +1113,14 @@ drop trigger if exists on_auth_user_confirmed on auth.users;
 create trigger on_auth_user_confirmed after update of email_confirmed_at on auth.users
   for each row execute function public.user_confirmed();
 
--- a guest order placed with the phone + email of an existing account goes straight into that account
+-- a guest order placed with the phone of an existing account goes straight into that account
 create or replace function public.order_attach_account()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if new.user_id is null then
     select p.id into new.user_id from public.profiles p join auth.users u on u.id = p.id
     where p.role = 'customer' and p.phone <> '' and p.phone = public.norm_phone(new.customer->>'phone')
-      and lower(u.email) = lower(new.customer->>'email') and u.email_confirmed_at is not null
+      and u.email_confirmed_at is not null
     limit 1;
   end if;
   return new;
@@ -1465,7 +1466,7 @@ grant select on public.activity to authenticated;
 create or replace function public.staff_perm_list()
 returns text[] language sql immutable as $$
   select array['orders.view','orders.manage','orders.edit','orders.refund','orders.delete',
-               'customers.view','customers.edit','customers.block','products.edit','categories.edit','reviews.manage',
+               'customers.view','customers.edit','customers.block','customers.delete','products.edit','categories.edit','reviews.manage',
                'pages.edit','settings.edit','promos.edit','insights.view','export.data','activity.view'];
 $$;
 -- keep only known permissions, and add what they depend on (e.g. editing orders needs seeing them)
@@ -1645,3 +1646,34 @@ alter table public.telegram_chats enable row level security;
 alter table public.telegram_codes enable row level security;
 alter table public.telegram_bot   enable row level security;
 revoke all on public.staff_invites, public.telegram_chats, public.telegram_codes, public.telegram_bot from anon, authenticated;
+
+-- ───────────── deleting accounts; one account per email ─────────────
+-- Deletes the login and profile. Their orders stay (as guest orders) so sales history is kept;
+-- their saved addresses, reviews and Telegram chats go with the account.
+create or replace function public.admin_delete_user(p_id uuid)
+returns boolean language plpgsql security definer set search_path = public as $$
+declare pr public.profiles%rowtype;
+begin
+  select * into pr from public.profiles where id = p_id;
+  if not found then raise exception 'NOT_FOUND:customer'; end if;
+  if p_id = auth.uid() or pr.role = 'owner' then raise exception 'FORBIDDEN'; end if;
+  if pr.role = 'admin' and not public.is_owner() then raise exception 'FORBIDDEN'; end if;
+  if pr.role = 'customer' and not public.can('customers.delete') then raise exception 'FORBIDDEN'; end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'storage' and table_name = 'objects' and column_name = 'owner') then
+    execute 'update storage.objects set owner = null where owner = $1' using p_id;   -- photos they uploaded stay
+  end if;
+  delete from public.profiles where id = p_id;                   -- logged in Activity with what was removed
+  delete from auth.users where id = p_id;
+  return true;
+end $$;
+
+-- sign-up form: is this email free? (an owner or staff email can never become a customer account)
+create or replace function public.email_available(p_email text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select not exists (select 1 from auth.users where lower(email) = lower(trim(coalesce(p_email, ''))))
+     and not exists (select 1 from public.staff_invites where email = lower(trim(coalesce(p_email, ''))));
+$$;
+
+revoke execute on function public.admin_delete_user(uuid) from public, anon;
+grant  execute on function public.admin_delete_user(uuid) to authenticated;
+grant  execute on function public.email_available(text) to anon, authenticated;

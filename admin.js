@@ -67,7 +67,7 @@ const isOwnerAcc = () => !!(A.profile && (A.profile.role === 'owner' || (A.profi
 const can = p => isOwnerAcc() || !!(A.profile && A.profile.role === 'admin' && !A.profile.suspended && (A.profile.perms || []).includes(p));
 const PERM_GROUPS = [
   ['Orders', [['orders.view', 'See orders'], ['orders.manage', 'Change status, payment and notes'], ['orders.edit', 'Edit orders and exchanges'], ['orders.refund', 'Returns and refunds'], ['orders.delete', 'Delete orders']]],
-  ['Customers', [['customers.view', 'See customers and their details'], ['customers.edit', 'Edit customers and their addresses'], ['customers.block', 'Block and unblock']]],
+  ['Customers', [['customers.view', 'See customers and their details'], ['customers.edit', 'Edit customers and their addresses'], ['customers.block', 'Block and unblock'], ['customers.delete', 'Delete customer accounts']]],
   ['Shop', [['products.edit', 'Add and edit products'], ['categories.edit', 'Edit categories'], ['reviews.manage', 'Approve and delete reviews'], ['pages.edit', 'Edit policy pages'], ['promos.edit', 'Discount codes']]],
   ['Business', [['settings.edit', 'Store settings (banner, delivery fees, payment, contact, emails)'], ['insights.view', 'Sales overview and visitor insights'], ['export.data', 'Export to Excel'], ['activity.view', 'See everyone’s activity']]],
 ];
@@ -651,7 +651,7 @@ function telegramCard() {
   const botReady = tg && tg.token;
   let connect = '';
   if (!can('orders.view')) connect = `<p class="note">${t('Order messages are only for team members who can see orders.')}</p>`;
-  else if (!botReady) connect = `<p class="note">${isOwnerAcc() ? t('First create the bot (steps below). Then everyone can connect with one tap.') : t('The main owner needs to set up the Telegram bot first.')}</p>`;
+  else if (!botReady) connect = `<p class="note">${t('The Telegram bot isn’t connected yet.')}</p>`;
   else if (c.code) connect = `<div class="tg-connect">
       <p class="note" style="margin-top:0">${c.bot ? t('Tap the button, then press {start} in Telegram. This page updates by itself.', { start: '<b>Start</b>' }) : t('Getting the bot ready…')}</p>
       ${c.bot ? `<div class="actions"><a class="btn btn-gold" href="https://t.me/${esc(c.bot)}?start=${esc(c.code)}" target="_blank" rel="noopener">${t('OPEN TELEGRAM')} ↗</a>
@@ -667,16 +667,6 @@ function telegramCard() {
       ${chats.length ? `<h3 style="margin-top:22px">${isOwnerAcc() ? t('WHO GETS ORDER MESSAGES') : t('YOUR CONNECTED CHATS')}</h3>
         <div class="atbl-wrap"><table class="atbl"><tbody>${chats.map(x => `<tr style="cursor:default"><td><span dir="auto">${esc(x.title || x.chat_id)}</span><div class="sm">${x.kind === 'private' ? t('Private chat') : t('Group')}${isOwnerAcc() && x.who ? ' · ' + t('connected by {name}', { name: esc(x.who) }) : ''}</div></td>
           <td class="num"><button class="btn btn-line btn-sm" data-act="tgRemove" data-chat="${esc(x.chat_id)}">${t('DISCONNECT')}</button></td></tr>`).join('')}</tbody></table></div>` : ''}
-      ${isOwnerAcc() ? `<details class="tg-setup"${botReady ? '' : ' open'}><summary>${t('Bot setup (main owner, once)')}</summary>
-        <div class="kv" style="margin:12px 0"><span class="k">${t('BOT TOKEN')}</span><span>${saved(tg && tg.token)}</span>
-          <span class="k">${t('MAIN CHAT')}</span><span>${tg && tg.chat ? `<span class="ok">✓ ${t('Saved')}</span>` : t('Optional')}</span></div>
-        <ol class="steps">
-          <li>${t('In Telegram, open {bf}, send {cmd}, choose a name (e.g. “ALLURE Orders”). It replies with a {token} like {ex}.', { bf: '<b>@BotFather</b>', cmd: '<b>/newbot</b>', token: `<b>${t('token')}</b>`, ex: '<code>123456:ABC-…</code>' })}</li>
-          <li>${t('In Supabase → {sql}, run (with your values):', { sql: '<b>SQL Editor</b>' })}
-            <div class="code">select vault.create_secret('PASTE_TOKEN', 'telegram_bot_token');</div></li>
-          <li>${t('Come back here, press {a}, then {b}.', { a: `<b>${t('Refresh status')}</b>`, b: `<b>${t('Connect my Telegram')}</b>` })}</li>
-        </ol>
-        <div class="actions"><button class="btn btn-line btn-sm" data-act="tgRefresh">${t('REFRESH STATUS')}</button></div></details>` : ''}
     </div>`;
 }
 function viewNotifications() {
@@ -788,7 +778,22 @@ function viewInsights() {
     <div class="adm-card mt"><h3>${t('PRODUCT INTEREST')}</h3><p class="note">${t('Most viewed pieces and how often they’re added to cart')}</p>
       ${prods.length ? `<div class="atbl-wrap"><table class="atbl"><thead><tr><th>${t('PRODUCT')}</th><th class="num">${t('VIEWS')}</th><th class="num">${t('ADDED TO CART')}</th><th class="num">${t('ADD RATE')}</th></tr></thead><tbody>
         ${prods.map(p => `<tr data-act="go" data-href="#/products/${esc(p.id)}"><td>${esc(prodName(p.id, p.name))}</td><td class="num">${num(p.views)}</td><td class="num">${num(p.adds)}</td><td class="num">${pct(p.adds, p.views)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="chart-empty">${t('No product views yet.')}</div>`}
-    </div>`;
+    </div>
+    ${shareLinksCard()}`;
+}
+// ready-made links that tell Insights where a visitor came from (?utm_source=…)
+const SHARE_SOURCES = [['instagram', 'Instagram (bio, stories, posts)'], ['tiktok', 'TikTok'], ['facebook', 'Facebook'], ['whatsapp', 'WhatsApp (status, chats)'], ['google', 'Google Maps / Google profile']];
+function shareLinksCard() {
+  const base = String(A.settings.siteUrl || 'https://www.allure-boutique.org').replace(/\/+$/, '') + '/';
+  const custom = (A.ui.shareCustom || '').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const row = (src, label) => { const url = base + '?utm_source=' + src; return `<div class="share-row"><div><div class="nm">${esc(label)}</div><div class="url" dir="ltr">${esc(url)}</div></div><button type="button" class="btn btn-line btn-sm" data-act="copyLink" data-url="${esc(url)}">${t('COPY')}</button></div>`; };
+  return `<div class="adm-card mt"><h3>${t('SHARE LINKS')}</h3>
+    <p class="note">${t('Use these links instead of the plain shop address. Visits from them appear under “Where visitors come from”.')}</p>
+    ${SHARE_SOURCES.map(([k, l]) => row(k, t(l))).join('')}
+    <div class="share-row"><div style="flex:1"><div class="nm">${t('Your own (e.g. a flyer or an influencer)')}</div>
+      <input class="field" id="share-custom" dir="ltr" placeholder="${t('e.g. flyer')}" value="${esc(A.ui.shareCustom || '')}" style="margin-top:6px"></div>
+      ${custom ? `<button type="button" class="btn btn-line btn-sm" data-act="copyLink" data-url="${esc(base + '?utm_source=' + custom)}">${t('COPY')}</button>` : ''}</div>
+    <p class="hint" style="margin-top:12px">${t('Your own visits while signed in to this dashboard are not counted. To test a link, open it in a private / incognito window.')}</p></div>`;
 }
 function drawInsightsChart() {
   const el = $('#insChart'); if (!el || !A.ins) return;
@@ -1020,7 +1025,6 @@ function viewCustomer(k, tab) {
   } else if (cur0 === 'addresses') {
     body = addressesBlock(key);
   } else if (cur0 === 'details') {
-    const guestOrdersSamePhone = isAcc && phone ? A.orders.filter(o => !o.user_id && o.customer.phone === phone).length : 0;
     const editable = can('customers.edit');
     body = `<div class="adm-grid g2">
       <div class="adm-card"><h3>${t('DETAILS')}</h3>
@@ -1048,9 +1052,11 @@ function viewCustomer(k, tab) {
              <button class="btn btn-danger btn-sm" style="height:44px" data-act="${isAcc ? 'blockAcc' : 'blockGuest'}" data-id="${esc(key)}">${t('BLOCK')}</button></div>`}
       </div>
       ${isAcc ? `<div class="adm-card mt"><h3>${t('GUEST ORDERS')}</h3>
-        <p class="note" style="margin-top:10px">${t('Guest orders with the same phone AND email join this account automatically once the email is confirmed.')}</p>
-        ${guestOrdersSamePhone ? `<p class="note">${n1(guestOrdersSamePhone, 'There is {n} guest order with this phone but a different email.', 'There are {n} guest orders with this phone but a different email.')}</p>
-          ${can('customers.edit') && can('orders.edit') ? `<button class="btn btn-ink btn-sm" data-act="linkGuest" data-id="${esc(key)}" data-p="${esc(phone)}">${t('ADD THEM TO THIS ACCOUNT')}</button>` : ''}` : `<p class="note">${t('No other guest orders with this phone.')}</p>`}</div>` : ''}
+        <p class="note" style="margin:10px 0 0">${t('Guest orders placed with this phone number are added to this account automatically.')}</p></div>` : ''}
+      ${isAcc && can('customers.delete') ? `<div class="adm-card mt"><h3>${t('DELETE ACCOUNT')}</h3>
+        <p class="note" style="margin-top:10px">${t('Removes the login, saved addresses and reviews. Their orders stay in your records as guest orders.')}</p>
+        ${A.ui.delUser === key ? `<div class="actions"><button class="btn btn-danger btn-sm" data-act="userDelete" data-id="${esc(key)}">${t('CONFIRM — DELETE ACCOUNT')}</button><button class="btn btn-line btn-sm" data-act="userDeleteNo">${t('KEEP')}</button></div>`
+          : `<button class="btn btn-danger btn-sm" data-act="userDeleteAsk" data-id="${esc(key)}">${t('DELETE ACCOUNT')}</button>`}</div>` : ''}
       </div></div>`;
   } else if (cur0 === 'activity') {
     body = `<div class="adm-grid g2">${activityCard('profiles', key, t('CHANGES TO THIS ACCOUNT'))}${activityCard('addresses', key, t('ADDRESS CHANGES'))}</div>`;
@@ -1193,7 +1199,7 @@ function permPicker(scope, list) {
       <button type="button" class="btn btn-line btn-sm" data-act="permPreset" data-scope="${scope}" data-i="-1">${t('Clear')}</button></div>
     <div class="perm-grid">${PERM_GROUPS.map(([g, items]) => `<div class="perm-group"><h4>${t(g)}</h4>${items.map(([k, l]) => `<label class="perm"><input type="checkbox" data-perm="${k}" data-scope="${scope}"${list.includes(k) ? ' checked' : ''}> ${t(l)}</label>`).join('')}</div>`).join('')}</div>`;
 }
-function loadTeam() { A.ui.teamLoading = true; API.admin.team().then(r => { A.team = r; A.ui.teamLoading = false; render(); }, e => { A.ui.teamLoading = false; A.ui.teamErr = API.errMessage(e); render(); }); }
+function loadTeam() { A.ui.teamLoading = true; loadCustomers(); API.admin.team().then(r => { A.team = r; A.ui.teamLoading = false; render(); }, e => { A.ui.teamLoading = false; A.ui.teamErr = API.errMessage(e); render(); }); }
 function viewTeam() {
   if (!A.team && !A.ui.teamLoading && !A.ui.teamErr) loadTeam();
   const ns = A.ui.newStaff || (A.ui.newStaff = { name: '', email: '', perms: ['orders.view', 'orders.manage', 'customers.view'] });
@@ -1213,7 +1219,7 @@ function viewTeam() {
           <div class="actions" style="margin-top:12px"><button class="btn btn-line btn-sm" data-act="staffEdit" data-id="${m.id}">${t('EDIT ACCESS')}</button>
             <button class="btn btn-line btn-sm" data-act="staffPause" data-id="${m.id}" data-v="${m.suspended ? 0 : 1}">${m.suspended ? t('RESUME ACCESS') : t('PAUSE ACCESS')}</button>
             ${can('activity.view') ? `<button class="btn btn-line btn-sm" data-act="actFor" data-id="${m.id}">${t('SEE ACTIVITY')}</button>` : ''}
-            ${rm ? `<button class="btn btn-danger btn-sm" data-act="staffRemove" data-id="${m.id}">${t('CONFIRM — REMOVE FROM TEAM')}</button><button class="btn btn-line btn-sm" data-act="staffRmNo">${t('KEEP')}</button>`
+            ${rm ? `<button class="btn btn-line btn-sm" data-act="staffRemove" data-id="${m.id}">${t('MAKE A CUSTOMER AGAIN')}</button><button class="btn btn-danger btn-sm" data-act="userDelete" data-id="${m.id}">${t('DELETE ACCOUNT')}</button><button class="btn btn-line btn-sm" data-act="staffRmNo">${t('KEEP')}</button>`
               : `<button class="btn btn-line btn-sm" data-act="staffRmAsk" data-id="${m.id}">${t('REMOVE')}</button>`}</div>`}
     </div>`;
   };
@@ -1277,6 +1283,7 @@ function actText(r) {
     case 'reviews': return r.action === 'delete' ? t('{who} deleted a review by {name}', { who, name: lbl }) : ch.approved && ch.approved[1] ? t('{who} approved a review by {name}', { who, name: lbl }) : t('{who} hid a review by {name}', { who, name: lbl });
     case 'profiles': {
       const cl = link('#/customer/' + encodeURIComponent('u:' + r.entity_id), lbl);
+      if (r.action === 'delete') return t('{who} deleted the account of {name}', { who, name: lbl });
       if (ch.role) return ch.role[1] === 'admin' ? t('{who} added {name} to the team', { who, name: lbl }) : ch.role[0] === 'admin' ? t('{who} removed {name} from the team', { who, name: lbl }) : t('{who} changed the role of {name}', { who, name: lbl });
       if (ch.suspended) return ch.suspended[1] ? t('{who} paused the access of {name}', { who, name: lbl }) : t('{who} resumed the access of {name}', { who, name: lbl });
       if (ch.perms) return t('{who} changed what {name} can do', { who, name: lbl });
@@ -1495,15 +1502,7 @@ function emailCard() {
     <form class="frm" data-form="testEmail" style="grid-template-columns:1fr auto;align-items:end"><div><label>${t('Send a test email to')}</label><input class="field" type="email" id="te-to" placeholder="you@gmail.com" value="${esc(A.ui.teTo || em.replyTo || '')}"></div>
       <button class="btn btn-gold" type="submit" style="height:48px"${es && es.key ? '' : ' disabled'}>${t('SEND TEST')}</button></form>
     ${A.ui.esMsg ? `<p class="note" style="margin-top:12px">${A.ui.esMsg}</p>` : ''}
-    <h3 style="margin-top:22px">${t('ONE-TIME SETUP (≈ 10 MINUTES)')}</h3>
-    <ol class="steps">
-      <li>${t('Create a free account at {site}, then {path} and add {domain}.', { site: '<b>resend.com</b>', path: '<b>Domains → Add domain</b>', domain: '<b dir="ltr">allure-boutique.org</b>' })}</li>
-      <li>${t('Resend shows 3 DNS records. Add each one in GoDaddy → DNS → Add New Record, then press Verify in Resend.')}</li>
-      <li>${t('In Resend → API Keys → Create API key (permission: Sending access). Copy it.')}</li>
-      <li>${t('In Supabase → {sql}, run (with your key):', { sql: '<b>SQL Editor</b>' })}<div class="code">select vault.create_secret('re_YOUR_KEY', 'resend_api_key');</div></li>
-      <li>${t('In Settings → Emails to customers, set the sender address (e.g. orders@allure-boutique.org — no mailbox needed) and your Gmail as “Replies go to”.')}</li>
-      <li>${t('Come back here and send a test email.')}</li>
-    </ol></div>`;
+    </div>`;
 }
 
 
@@ -1660,6 +1659,14 @@ const ACT = {
   },
   catSave: () => saveCategories(),
   catReset: () => { A.ui.cats = null; render(); },
+  copyLink: async el => { try { await navigator.clipboard.writeText(el.dataset.url); toast(t('Link copied')); } catch (e) { prompt(t('Copy this link:'), el.dataset.url); } },
+  userDeleteAsk: el => { A.ui.delUser = el.dataset.id; render(); },
+  userDeleteNo: () => { A.ui.delUser = null; render(); },
+  userDelete: async el => {
+    try { await API.admin.deleteUser(el.dataset.id); A.ui.delUser = null; A.orders = can('orders.view') ? await API.admin.orders() : []; await loadCustomers();
+      if (A.team) loadTeam(); toast(t('Account deleted')); location.hash = location.hash.startsWith('#/team') ? '#/team' : '#/customers'; render(); }
+    catch (e) { toast(API.errMessage(e)); }
+  },
   linkGuest: async el => { try { const n = await API.admin.linkOrders(el.dataset.id, el.dataset.p); A.orders = await API.admin.orders(); await loadCustomers(); toast(n1(n, '{n} order added to the account', '{n} orders added to the account')); render(); } catch (e) { toast(API.errMessage(e)); } },
   addrNew: () => { A.ui.addr.form = { is_default: !A.ui.addr.list.length }; render(); },
   addrEdit: el => { A.ui.addr.form = { ...A.ui.addr.list.find(x => x.id === +el.dataset.id) }; render(); },
@@ -1869,6 +1876,7 @@ document.addEventListener('input', e => {
   if (el.id === 'pq') { A.ui.pq = el.value; render(); return; }
   if (el.id === 'pcat') { A.ui.pcat = el.value; render(); return; }
   if (el.id === 'cq') { A.ui.cq = el.value; render(); return; }
+  if (el.id === 'share-custom') { A.ui.shareCustom = el.value; render(); return; }
   if (ds.page) { const pg = A.settings.pages[A.ui.pslug]; pg[ds.page] = el.value; const pv = document.getElementById('prev-' + ds.page); if (pv) pv.innerHTML = PAGES.render(el.value || PAGES.defaults(ds.page)[A.ui.pslug]); return; }
   if (el.id === 'ex-from') { A.ui.exFrom = el.value; return; }
   if (el.id === 'ex-to') { A.ui.exTo = el.value; return; }
