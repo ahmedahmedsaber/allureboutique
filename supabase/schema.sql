@@ -66,6 +66,71 @@ alter table public.profiles add column if not exists blocked        boolean not 
 alter table public.profiles add column if not exists blocked_reason text not null default '';
 alter table public.profiles add column if not exists blocked_at     timestamptz;
 
+-- team: one main owner ('owner') plus staff ('admin') with chosen permissions
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check check (role in ('customer','admin','owner'));
+alter table public.profiles add column if not exists perms      text[]  not null default '{}';   -- staff permissions, e.g. {orders.view,orders.manage}
+alter table public.profiles add column if not exists suspended  boolean not null default false;  -- staff access paused
+alter table public.profiles add column if not exists staff_note text    not null default '';     -- owner's internal note about a customer
+
+-- staff the owner has invited; applied when that email signs up
+create table if not exists public.staff_invites (
+  email      text primary key check (email = lower(email)),
+  name       text not null default '',
+  perms      text[] not null default '{}',
+  invited_by uuid,
+  created_at timestamptz not null default now()
+);
+
+-- saved delivery addresses (customers pick one at checkout)
+create table if not exists public.addresses (
+  id         bigint generated always as identity primary key,
+  user_id    uuid not null references auth.users(id) on delete cascade default auth.uid(),
+  label      text not null default '' check (char_length(label) <= 40),
+  city       text not null check (char_length(city) between 1 and 80),
+  region     text not null check (char_length(region) between 1 and 120),
+  street     text not null check (char_length(street) between 1 and 160),
+  building   text not null check (char_length(building) between 1 and 60),
+  apartment  text not null default '' check (char_length(apartment) <= 60),
+  is_default boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists addresses_user_idx on public.addresses(user_id);
+
+-- who did what in the dashboard (written by triggers; read on the Activity page)
+create table if not exists public.activity (
+  id         bigint generated always as identity primary key,
+  at         timestamptz not null default now(),
+  actor      uuid,
+  actor_name text not null default '',
+  action     text not null,                 -- insert | update | delete | sign_in | export | …
+  entity     text not null default '',      -- orders | products | settings | profiles | …
+  entity_id  text not null default '',
+  label      text not null default '',      -- order number, product name, customer name…
+  details    jsonb not null default '{}'::jsonb
+);
+create index if not exists activity_at_idx     on public.activity(at desc);
+create index if not exists activity_entity_idx on public.activity(entity, entity_id);
+create index if not exists activity_actor_idx  on public.activity(actor, at desc);
+
+-- Telegram chats that get a message for every order (each staff member connects their own with one tap)
+create table if not exists public.telegram_chats (
+  chat_id    text primary key,
+  title      text not null default '',
+  kind       text not null default 'private',
+  user_id    uuid references auth.users(id) on delete cascade,   -- who connected it
+  created_at timestamptz not null default now()
+);
+create table if not exists public.telegram_codes (
+  code       text primary key,
+  user_id    uuid not null,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.telegram_bot (
+  id       int primary key default 1 check (id = 1),
+  username text not null default ''
+);
+
 -- phone numbers that may not place orders (guests and accounts alike)
 create table if not exists public.blocked_phones (
   phone      text primary key,
@@ -130,9 +195,31 @@ create table if not exists public.reviews (
 
 -- ─────────────────────────────── helpers ───────────────────────────────
 
+-- phone numbers are stored as 01xxxxxxxxx: '+20 101 234 5678', '201012345678' and '010 1234 5678' are all the same number
+create or replace function public.norm_phone(p text)
+returns text language sql immutable as $$
+  select case
+    when d ~ '^0020(1[0-9]{9})$' then '0' || substr(d, 5)
+    when d ~ '^20(1[0-9]{9})$'   then '0' || substr(d, 3)
+    when d ~ '^1[0-9]{9}$'       then '0' || d
+    else d end
+  from (select regexp_replace(coalesce(p, ''), '[^0-9]', '', 'g') as d) x;
+$$;
+
+-- staff = the owner or an admin whose access isn't paused
 create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin');
+  select exists (select 1 from public.profiles where id = auth.uid() and role in ('owner','admin') and not suspended);
+$$;
+create or replace function public.is_owner()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'owner');
+$$;
+-- can('orders.edit'): the owner can do everything; staff only what the owner ticked for them
+create or replace function public.can(p_perm text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and not suspended
+                 and (role = 'owner' or (role = 'admin' and p_perm = any(perms))));
 $$;
 
 -- new sign-ups get a profile row (name/phone come from the sign-up form metadata)
@@ -142,8 +229,13 @@ begin
   insert into public.profiles (id, email, name, phone)
   values (new.id, coalesce(new.email, ''),
           coalesce(new.raw_user_meta_data->>'name', ''),
-          coalesce(new.raw_user_meta_data->>'phone', ''))
+          public.norm_phone(new.raw_user_meta_data->>'phone'))
   on conflict (id) do nothing;
+  -- invited by the owner → becomes staff with the chosen permissions
+  update public.profiles p set role = 'admin', perms = i.perms, suspended = false,
+         name = coalesce(nullif(p.name, ''), i.name)
+    from public.staff_invites i where p.id = new.id and i.email = lower(new.email) and p.role = 'customer';
+  delete from public.staff_invites where email = lower(new.email);
   return new;
 end $$;
 drop trigger if exists on_auth_user_created on auth.users;
@@ -190,6 +282,12 @@ begin
         update public.products set stock = greatest(stock - (it->>'qty')::int, 0) where id = it->>'id';
       end loop;
       new.restocked := false;
+    end if;
+    -- moving a returned order back (e.g. the return was a mistake) cancels the refund amount
+    if old.status = 'refunded' and new.status in ('pending','shipped','received','exchanged') and old.refunded > 0 then
+      new.changes := coalesce(old.changes, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+        'at', now(), 'type', 'refund_undone', 'amount', old.refunded, 'note', ''));
+      new.refunded := 0;
     end if;
   end if;
   return new;
@@ -381,18 +479,39 @@ returns text language sql immutable as $$
   select replace(replace(replace(coalesce(t, ''), '&', '&amp;'), '<', '&lt;'), '>', '&gt;');
 $$;
 
+-- Who gets order messages: the chat saved in Vault (optional) plus every chat a staff member connected
+-- from the dashboard. A person's own chat stops getting messages if they lose access to orders.
+create or replace function public.telegram_targets()
+returns setof text language sql stable security definer set search_path = public as $$
+  select decrypted_secret from vault.decrypted_secrets where name = 'telegram_chat_id' and coalesce(decrypted_secret, '') <> ''
+  union
+  select c.chat_id from public.telegram_chats c left join public.profiles p on p.id = c.user_id
+  where p.id is not null and not p.suspended and (p.role = 'owner' or (p.role = 'admin' and 'orders.view' = any(p.perms)));
+$$;
+
+create or replace function public.telegram_call(method text, body jsonb)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare tok text; rid bigint;
+begin
+  select decrypted_secret into tok from vault.decrypted_secrets where name = 'telegram_bot_token' limit 1;
+  if tok is null then return null; end if;
+  select net.http_post(url := 'https://api.telegram.org/bot' || tok || '/' || method, body := body,
+                       headers := '{"Content-Type":"application/json"}'::jsonb) into rid;
+  return rid;
+end $$;
+
+create or replace function public.telegram_send_to(chat text, msg text)
+returns bigint language sql security definer set search_path = public as $$
+  select public.telegram_call('sendMessage', jsonb_build_object('chat_id', chat, 'text', msg, 'parse_mode', 'HTML', 'disable_web_page_preview', true));
+$$;
+
 create or replace function public.telegram_send(msg text)
 returns bigint language plpgsql security definer set search_path = public as $$
-declare tok text; chat text; rid bigint;
+declare chat text; rid bigint;
 begin
-  select decrypted_secret into tok  from vault.decrypted_secrets where name = 'telegram_bot_token' limit 1;
-  select decrypted_secret into chat from vault.decrypted_secrets where name = 'telegram_chat_id'   limit 1;
-  if tok is null or chat is null then return null; end if;
-  select net.http_post(
-    url     := 'https://api.telegram.org/bot' || tok || '/sendMessage',
-    body    := jsonb_build_object('chat_id', chat, 'text', msg, 'parse_mode', 'HTML', 'disable_web_page_preview', true),
-    headers := '{"Content-Type":"application/json"}'::jsonb
-  ) into rid;
+  for chat in select * from public.telegram_targets() loop
+    rid := public.telegram_send_to(chat, msg);
+  end loop;
   return rid;
 end $$;
 
@@ -437,14 +556,111 @@ begin
   if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
   return jsonb_build_object(
     'token', exists (select 1 from vault.decrypted_secrets where name = 'telegram_bot_token'),
-    'chat',  exists (select 1 from vault.decrypted_secrets where name = 'telegram_chat_id'));
+    'chat',  exists (select 1 from vault.decrypted_secrets where name = 'telegram_chat_id'),
+    'bot',   (select nullif(username, '') from public.telegram_bot where id = 1),
+    'chats', (select coalesce(jsonb_agg(jsonb_build_object('chat_id', c.chat_id, 'title', c.title, 'kind', c.kind,
+                'user_id', c.user_id, 'who', coalesce(nullif(p.name, ''), p.email), 'created_at', c.created_at) order by c.created_at), '[]'::jsonb)
+              from public.telegram_chats c left join public.profiles p on p.id = c.user_id
+              where public.is_owner() or c.user_id = auth.uid()));
 end $$;
 
+-- sends a test to the caller's own chats (the owner: to everyone who gets order messages)
 create or replace function public.admin_test_telegram()
 returns bigint language plpgsql security definer set search_path = public as $$
+declare chat text; rid bigint;
+  msg text := '✅ <b>ALLURE Boutique</b>' || E'\n' || 'Telegram notifications are working. You will get a message here for every new order.';
 begin
   if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
-  return public.telegram_send('✅ <b>ALLURE Boutique</b>' || E'\n' || 'Telegram notifications are working. You will get a message here for every new order.');
+  for chat in select * from public.telegram_targets() t
+              where public.is_owner() or t in (select chat_id from public.telegram_chats where user_id = auth.uid()) loop
+    rid := public.telegram_send_to(chat, msg);
+  end loop;
+  return rid;
+end $$;
+
+-- "Connect my Telegram": 1) get a one-time code and the bot's name, 2) the person opens t.me/<bot>?start=<code>
+-- and presses Start, 3) the dashboard keeps calling admin_telegram_check() until the bot has seen that message.
+create or replace function public.admin_telegram_connect()
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare c text := substr(md5(random()::text || clock_timestamp()::text), 1, 10); bot text; req bigint;
+begin
+  if not public.can('orders.view') then raise exception 'FORBIDDEN'; end if;
+  if not exists (select 1 from vault.decrypted_secrets where name = 'telegram_bot_token') then raise exception 'NO_TELEGRAM_BOT'; end if;
+  delete from public.telegram_codes where user_id = auth.uid() or created_at < now() - interval '1 day';
+  insert into public.telegram_codes (code, user_id) values (c, auth.uid());
+  select nullif(username, '') into bot from public.telegram_bot where id = 1;
+  if bot is null then req := public.telegram_call('getMe', '{}'::jsonb); end if;
+  return jsonb_build_object('code', c, 'bot', bot, 'req', req);
+end $$;
+
+create or replace function public.admin_telegram_bot(p_req bigint)
+returns text language plpgsql security definer set search_path = public as $$
+declare r record; u text;
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  select status_code, content into r from net._http_response where id = p_req;
+  if r.status_code = 200 then
+    u := (r.content::jsonb)->'result'->>'username';
+    if u is not null then
+      insert into public.telegram_bot (id, username) values (1, u) on conflict (id) do update set username = excluded.username;
+    end if;
+  end if;
+  return u;
+end $$;
+
+-- Reads the bot's new messages (the reply to the previous request, p_req), connects every chat that sent
+-- "/start <code>" with a waiting code, then asks Telegram again. Returns {linked, title} or {req} to try again.
+create or replace function public.admin_telegram_check(p_code text, p_req bigint)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare r record; upd jsonb; msg jsonb; m text[]; owner uuid; last_id bigint; mine jsonb; ttl text;
+begin
+  if not public.can('orders.view') then raise exception 'FORBIDDEN'; end if;
+  if not exists (select 1 from public.telegram_codes where code = p_code and user_id = auth.uid()) then
+    -- already used: report the chat it connected
+    select jsonb_build_object('linked', true, 'title', title) into mine from public.telegram_chats
+      where user_id = auth.uid() order by created_at desc limit 1;
+    return coalesce(mine, jsonb_build_object('expired', true));
+  end if;
+  if p_req is not null then
+    select status_code, content into r from net._http_response where id = p_req;
+    if r.status_code = 409 then return jsonb_build_object('error', 'webhook'); end if;
+    if r.status_code = 200 then
+      for upd in select * from jsonb_array_elements(coalesce((r.content::jsonb)->'result', '[]'::jsonb)) loop
+        last_id := greatest(coalesce(last_id, 0), (upd->>'update_id')::bigint);
+        msg := coalesce(upd->'message', upd->'channel_post');
+        m := regexp_match(coalesce(msg->>'text', ''), '^/start(@[A-Za-z0-9_]+)?\s+([0-9a-f]{10})\s*$');
+        if m is null then continue; end if;
+        select user_id into owner from public.telegram_codes where code = m[2];
+        if owner is null then continue; end if;
+        ttl := coalesce(msg->'chat'->>'title', trim(concat_ws(' ', msg->'chat'->>'first_name', msg->'chat'->>'last_name')),
+                        msg->'chat'->>'username', '');
+        insert into public.telegram_chats (chat_id, title, kind, user_id)
+        values (msg->'chat'->>'id', ttl, coalesce(msg->'chat'->>'type', 'private'), owner)
+        on conflict (chat_id) do update set title = excluded.title, kind = excluded.kind, user_id = excluded.user_id;
+        delete from public.telegram_codes where code = m[2];
+        perform public.telegram_send_to(msg->'chat'->>'id', '✅ <b>ALLURE Boutique</b>' || E'\n' ||
+          'Connected — you will get a message here for every new order.');
+      end loop;
+      if last_id is not null then
+        perform public.telegram_call('getUpdates', jsonb_build_object('offset', last_id + 1, 'timeout', 0));   -- mark as read
+      end if;
+      if not exists (select 1 from public.telegram_codes where code = p_code) then
+        select jsonb_build_object('linked', true, 'title', title) into mine from public.telegram_chats
+          where user_id = auth.uid() order by created_at desc limit 1;
+        return mine;
+      end if;
+    end if;
+  end if;
+  return jsonb_build_object('req', public.telegram_call('getUpdates',
+    jsonb_build_object('timeout', 0, 'allowed_updates', jsonb_build_array('message', 'channel_post'))));
+end $$;
+
+create or replace function public.admin_telegram_remove(p_chat text)
+returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  delete from public.telegram_chats where chat_id = p_chat and (public.is_owner() or user_id = auth.uid());
+  return found;
 end $$;
 
 create or replace function public.admin_http_result(p_id bigint)
@@ -469,40 +685,40 @@ alter table public.reviews     enable row level security;
 drop policy if exists settings_read  on public.settings;
 drop policy if exists settings_write on public.settings;
 create policy settings_read  on public.settings for select using (true);
-create policy settings_write on public.settings for update using (public.is_admin()) with check (public.is_admin());
+create policy settings_write on public.settings for update using (public.is_admin()) with check (public.is_admin());   -- which parts: settings_guard()
 
 drop policy if exists products_read   on public.products;
 drop policy if exists products_insert on public.products;
 drop policy if exists products_update on public.products;
 drop policy if exists products_delete on public.products;
 create policy products_read   on public.products for select using (active or public.is_admin());
-create policy products_insert on public.products for insert with check (public.is_admin());
-create policy products_update on public.products for update using (public.is_admin()) with check (public.is_admin());
-create policy products_delete on public.products for delete using (public.is_admin());
+create policy products_insert on public.products for insert with check (public.can('products.edit'));
+create policy products_update on public.products for update using (public.can('products.edit')) with check (public.can('products.edit'));
+create policy products_delete on public.products for delete using (public.can('products.edit'));
 
 drop policy if exists profiles_read   on public.profiles;
 drop policy if exists profiles_update on public.profiles;
-create policy profiles_read   on public.profiles for select using (id = auth.uid() or public.is_admin());
+create policy profiles_read   on public.profiles for select using (id = auth.uid() or public.can('customers.view'));
 create policy profiles_update on public.profiles for update using (id = auth.uid()) with check (id = auth.uid());
 
 drop policy if exists orders_read   on public.orders;
 drop policy if exists orders_update on public.orders;
-create policy orders_read   on public.orders for select using (user_id = auth.uid() or public.is_admin());
-create policy orders_update on public.orders for update using (public.is_admin()) with check (public.is_admin());
+create policy orders_read   on public.orders for select using (user_id = auth.uid() or public.can('orders.view'));
+create policy orders_update on public.orders for update using (public.can('orders.manage')) with check (public.can('orders.manage'));
 
 drop policy if exists promo_admin on public.promo_codes;
-create policy promo_admin on public.promo_codes for all using (public.is_admin()) with check (public.is_admin());
+create policy promo_admin on public.promo_codes for all using (public.can('promos.edit')) with check (public.can('promos.edit'));
 
 drop policy if exists reviews_read   on public.reviews;
 drop policy if exists reviews_insert on public.reviews;
 drop policy if exists reviews_update on public.reviews;
 drop policy if exists reviews_delete on public.reviews;
-create policy reviews_read   on public.reviews for select using (approved or user_id = auth.uid() or public.is_admin());
+create policy reviews_read   on public.reviews for select using (approved or user_id = auth.uid() or public.can('reviews.manage'));
 create policy reviews_insert on public.reviews for insert to authenticated
   with check (user_id = auth.uid() and approved = false
               and not exists (select 1 from public.profiles where id = auth.uid() and blocked));
-create policy reviews_update on public.reviews for update using (public.is_admin()) with check (public.is_admin());
-create policy reviews_delete on public.reviews for delete using (public.is_admin());
+create policy reviews_update on public.reviews for update using (public.can('reviews.manage')) with check (public.can('reviews.manage'));
+create policy reviews_delete on public.reviews for delete using (public.can('reviews.manage'));
 
 -- table access for the browser roles (RLS above decides which rows)
 grant usage on schema public to anon, authenticated;
@@ -523,6 +739,9 @@ grant  update (approved) on public.reviews to authenticated;               -- RL
 
 -- functions: only the public entry points are callable from the browser
 revoke execute on function public.telegram_send(text)  from public, anon, authenticated;
+revoke execute on function public.telegram_send_to(text, text) from public, anon, authenticated;
+revoke execute on function public.telegram_call(text, jsonb)   from public, anon, authenticated;
+revoke execute on function public.telegram_targets()           from public, anon, authenticated;
 revoke execute on function public.order_notify()        from public, anon, authenticated;
 revoke execute on function public.handle_new_user()     from public, anon, authenticated;
 grant  execute on function public.place_order(jsonb)    to anon, authenticated;
@@ -545,11 +764,11 @@ drop policy if exists product_images_admin_insert on storage.objects;
 drop policy if exists product_images_admin_update on storage.objects;
 drop policy if exists product_images_admin_delete on storage.objects;
 create policy product_images_admin_insert on storage.objects for insert to authenticated
-  with check (bucket_id = 'product-images' and public.is_admin());
+  with check (bucket_id = 'product-images' and (public.can('products.edit') or public.can('settings.edit') or public.can('categories.edit')));
 create policy product_images_admin_update on storage.objects for update to authenticated
-  using (bucket_id = 'product-images' and public.is_admin());
+  using (bucket_id = 'product-images' and (public.can('products.edit') or public.can('settings.edit') or public.can('categories.edit')));
 create policy product_images_admin_delete on storage.objects for delete to authenticated
-  using (bucket_id = 'product-images' and public.is_admin());
+  using (bucket_id = 'product-images' and (public.can('products.edit') or public.can('settings.edit') or public.can('categories.edit')));
 
 -- ─────────────────────────────── realtime ───────────────────────────────
 -- Dashboard hears new orders instantly; customers see their status change live.
@@ -605,7 +824,7 @@ declare
   since timestamptz := (today - make_interval(days => d - 1)) at time zone tz;
   r     jsonb;
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not public.can('insights.view') then raise exception 'FORBIDDEN'; end if;
   delete from public.events where created_at < now() - interval '400 days';   -- keep about a year
 
   with e as (select * from public.events where created_at >= since),
@@ -658,7 +877,9 @@ grant  execute on function public.admin_insights(int) to authenticated;
 
 alter table public.blocked_phones enable row level security;
 drop policy if exists blocked_phones_admin on public.blocked_phones;
-create policy blocked_phones_admin on public.blocked_phones for all using (public.is_admin()) with check (public.is_admin());
+drop policy if exists blocked_phones_read on public.blocked_phones;
+create policy blocked_phones_read  on public.blocked_phones for select using (public.can('customers.view'));
+create policy blocked_phones_admin on public.blocked_phones for all using (public.can('customers.block')) with check (public.can('customers.block'));
 revoke all on public.blocked_phones from anon;
 grant select, insert, update, delete on public.blocked_phones to authenticated;   -- RLS limits this to admins
 
@@ -682,7 +903,7 @@ declare
   items jsonb := '[]'::jsonb; sub int := 0; d record; mode text := coalesce(p->>'mode', 'edit');
   old_total int;
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not public.can('orders.edit') then raise exception 'FORBIDDEN'; end if;
   select * into o from public.orders where id = p_id for update;
   if not found then raise exception 'NOT_FOUND:order'; end if;
   old_total := o.total;
@@ -723,11 +944,17 @@ begin
   if p ? 'address' then o.address := coalesce(p->>'address', ''); end if;
   if p ? 'delivery_fee' then o.delivery_fee := greatest(coalesce((p->>'delivery_fee')::int, 0), 0); end if;
   if p ? 'discount' then o.discount := greatest(coalesce((p->>'discount')::int, 0), 0); end if;
+  if p ? 'payment' and p->>'payment' in ('cod','instapay') then o.payment := p->>'payment'; end if;
+  if p ? 'customer_note' then o.note := left(coalesce(p->>'customer_note', ''), 1000); end if;
+  if p ? 'customer' then
+    o.customer := jsonb_set(o.customer, '{phone}', to_jsonb(public.norm_phone(o.customer->>'phone')));
+    if o.customer->>'phone' !~ '^01[0125][0-9]{8}$' then raise exception 'INVALID:phone'; end if;
+  end if;
   o.total := greatest(o.subtotal - o.discount + o.delivery_fee, 0);
 
   update public.orders set
     items = o.items, subtotal = o.subtotal, customer = o.customer, fulfil = o.fulfil, city = o.city, address = o.address,
-    delivery_fee = o.delivery_fee, discount = o.discount, total = o.total,
+    delivery_fee = o.delivery_fee, discount = o.discount, total = o.total, payment = o.payment, note = o.note,
     status = case when mode = 'exchange' then 'exchanged' else status end,
     changes = changes || jsonb_build_array(jsonb_build_object('at', now(), 'type', mode, 'note', coalesce(p->>'note', ''),
                 'total_before', old_total, 'total_after', o.total))
@@ -740,7 +967,7 @@ create or replace function public.admin_refund_order(p_id bigint, p_amount int, 
 returns public.orders language plpgsql security definer set search_path = public as $$
 declare o public.orders%rowtype;
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not public.can('orders.refund') then raise exception 'FORBIDDEN'; end if;
   select * into o from public.orders where id = p_id for update;
   if not found then raise exception 'NOT_FOUND:order'; end if;
   if coalesce(p_amount, 0) < 0 or o.refunded + coalesce(p_amount, 0) > o.total then raise exception 'INVALID:amount'; end if;
@@ -760,7 +987,7 @@ create or replace function public.admin_delete_order(p_id bigint, p_restock bool
 returns text language plpgsql security definer set search_path = public as $$
 declare o public.orders%rowtype;
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not public.can('orders.delete') then raise exception 'FORBIDDEN'; end if;
   select * into o from public.orders where id = p_id for update;
   if not found then raise exception 'NOT_FOUND:order'; end if;
   if p_restock and not o.restocked then perform public.order_stock(o.items, 1); end if;
@@ -772,10 +999,10 @@ end $$;
 create or replace function public.admin_customers()
 returns jsonb language plpgsql stable security definer set search_path = public as $$
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not public.can('customers.view') then raise exception 'FORBIDDEN'; end if;
   return jsonb_build_object(
     'accounts', (select coalesce(jsonb_agg(t order by t.last_order desc nulls last, t.created_at desc), '[]'::jsonb) from (
-      select p.id, p.name, p.email, p.phone, p.role, p.blocked, p.blocked_reason, p.blocked_at, p.created_at,
+      select p.id, p.name, p.email, p.phone, p.role, p.blocked, p.blocked_reason, p.blocked_at, p.created_at, p.staff_note,
              count(o.id) as orders,
              coalesce(sum(o.total - o.refunded) filter (where o.status not in ('cancelled')), 0) as spent,
              max(o.created_at) as last_order
@@ -793,19 +1020,24 @@ begin
     'blocked_phones', (select coalesce(jsonb_agg(b order by b.created_at desc), '[]'::jsonb) from public.blocked_phones b));
 end $$;
 
--- Edit a customer account: name, phone, block / unblock (blocking also blocks their phone number).
+-- Edit a customer account: name, phone, internal note, block / unblock (blocking also blocks their phone number).
 create or replace function public.admin_update_customer(p_id uuid, p jsonb)
 returns public.profiles language plpgsql security definer set search_path = public as $$
-declare pr public.profiles%rowtype; was_blocked boolean;
+declare pr public.profiles%rowtype; was_blocked boolean; ph text;
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
   select * into pr from public.profiles where id = p_id for update;
   if not found then raise exception 'NOT_FOUND:customer'; end if;
+  if (p ? 'name' or p ? 'phone' or p ? 'staff_note') and not public.can('customers.edit') then raise exception 'FORBIDDEN'; end if;
+  if (p ? 'blocked' or p ? 'blocked_reason') and not public.can('customers.block') then raise exception 'FORBIDDEN'; end if;
+  if pr.role in ('owner','admin') and not public.is_owner() then raise exception 'FORBIDDEN'; end if;   -- staff are managed on the Team page
   was_blocked := pr.blocked;
-  if (p->>'blocked')::boolean is true and (pr.role = 'admin' or p_id = auth.uid()) then raise exception 'FORBIDDEN'; end if;
+  if (p->>'blocked')::boolean is true and (pr.role <> 'customer' or p_id = auth.uid()) then raise exception 'FORBIDDEN'; end if;
+  ph := case when p ? 'phone' then public.norm_phone(p->>'phone') end;
+  if ph is not null and ph <> '' and ph !~ '^01[0125][0-9]{8}$' then raise exception 'INVALID:phone'; end if;
   update public.profiles set
     name  = coalesce(nullif(trim(p->>'name'), ''), name),
-    phone = coalesce(regexp_replace(p->>'phone', '\s', '', 'g'), phone),
+    phone = coalesce(ph, phone),
+    staff_note = case when p ? 'staff_note' then left(coalesce(p->>'staff_note', ''), 2000) else staff_note end,
     blocked = coalesce((p->>'blocked')::boolean, blocked),
     blocked_reason = case when p ? 'blocked_reason' then coalesce(p->>'blocked_reason', '') else blocked_reason end,
     blocked_at = case when coalesce((p->>'blocked')::boolean, blocked) and not was_blocked then now()
@@ -822,9 +1054,9 @@ end $$;
 
 create or replace function public.admin_block_phone(p_phone text, p_blocked boolean, p_reason text default '')
 returns boolean language plpgsql security definer set search_path = public as $$
-declare ph text := regexp_replace(coalesce(p_phone, ''), '\s', '', 'g');
+declare ph text := public.norm_phone(p_phone);
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not public.can('customers.block') then raise exception 'FORBIDDEN'; end if;
   if ph = '' then raise exception 'INVALID:phone'; end if;
   if p_blocked then
     insert into public.blocked_phones (phone, reason) values (ph, coalesce(p_reason, ''))
@@ -835,18 +1067,76 @@ begin
   return p_blocked;
 end $$;
 
--- After sign-in: attach earlier guest orders placed with the same phone AND the same (confirmed) email.
-create or replace function public.link_my_orders()
+-- Guest orders join an account when BOTH the phone and the (confirmed) email match.
+-- Runs on its own: when an account is created or confirmed, when its phone changes, and when a guest
+-- order comes in for a phone + email that already has an account. The shop also calls link_my_orders() at sign-in.
+create or replace function public.link_orders_for(p_user uuid)
 returns int language plpgsql security definer set search_path = public as $$
 declare em text; confirmed timestamptz; ph text; n int;
 begin
-  if auth.uid() is null then return 0; end if;
-  select email, email_confirmed_at into em, confirmed from auth.users where id = auth.uid();
+  select email, email_confirmed_at into em, confirmed from auth.users where id = p_user;
   if em is null or confirmed is null then return 0; end if;
-  select phone into ph from public.profiles where id = auth.uid();
+  select phone into ph from public.profiles where id = p_user and role = 'customer';
   if coalesce(ph, '') = '' then return 0; end if;
-  update public.orders set user_id = auth.uid()
-  where user_id is null and customer->>'phone' = ph and lower(customer->>'email') = lower(em);
+  update public.orders set user_id = p_user,
+         changes = changes || jsonb_build_array(jsonb_build_object('at', now(), 'type', 'linked', 'note', ''))
+  where user_id is null and public.norm_phone(customer->>'phone') = ph and lower(customer->>'email') = lower(em);
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+create or replace function public.link_my_orders()
+returns int language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return 0; end if;
+  return public.link_orders_for(auth.uid());
+end $$;
+
+create or replace function public.profile_after_change()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' or new.phone is distinct from old.phone then perform public.link_orders_for(new.id); end if;
+  return null;
+end $$;
+drop trigger if exists profiles_link_orders on public.profiles;
+create trigger profiles_link_orders after insert or update of phone on public.profiles
+  for each row execute function public.profile_after_change();
+
+create or replace function public.user_confirmed()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.email_confirmed_at is not null and old.email_confirmed_at is null then perform public.link_orders_for(new.id); end if;
+  return null;
+end $$;
+drop trigger if exists on_auth_user_confirmed on auth.users;
+create trigger on_auth_user_confirmed after update of email_confirmed_at on auth.users
+  for each row execute function public.user_confirmed();
+
+-- a guest order placed with the phone + email of an existing account goes straight into that account
+create or replace function public.order_attach_account()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.user_id is null then
+    select p.id into new.user_id from public.profiles p join auth.users u on u.id = p.id
+    where p.role = 'customer' and p.phone <> '' and p.phone = public.norm_phone(new.customer->>'phone')
+      and lower(u.email) = lower(new.customer->>'email') and u.email_confirmed_at is not null
+    limit 1;
+  end if;
+  return new;
+end $$;
+drop trigger if exists orders_attach_account on public.orders;
+create trigger orders_attach_account before insert on public.orders for each row execute function public.order_attach_account();
+
+-- The owner can attach a guest's orders (by phone) to an account by hand, e.g. when the email differs.
+create or replace function public.admin_link_orders(p_user uuid, p_phone text)
+returns int language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if not (public.can('customers.edit') and public.can('orders.edit')) then raise exception 'FORBIDDEN'; end if;
+  if not exists (select 1 from public.profiles where id = p_user and role = 'customer') then raise exception 'NOT_FOUND:customer'; end if;
+  update public.orders set user_id = p_user,
+         changes = changes || jsonb_build_array(jsonb_build_object('at', now(), 'type', 'linked', 'note', 'by staff'))
+  where user_id is null and public.norm_phone(customer->>'phone') = public.norm_phone(p_phone);
   get diagnostics n = row_count;
   return n;
 end $$;
@@ -964,7 +1254,7 @@ create or replace function public.admin_test_email(p_to text)
 returns bigint language plpgsql security definer set search_path = public as $$
 declare o public.orders%rowtype;
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not (public.can('settings.edit') and public.can('orders.view')) then raise exception 'FORBIDDEN'; end if;
   select * into o from public.orders order by created_at desc limit 1;
   if not found then
     o.order_no := 'AL00000'; o.lang := 'en'; o.customer := '{"name":"ALLURE Customer"}'; o.items := '[]';
@@ -998,3 +1288,360 @@ grant  execute on function public.admin_test_email(text)                to authe
 grant  execute on function public.link_my_orders()                      to authenticated;
 grant  execute on function public.review_summary()                      to anon, authenticated;
 grant  update (size_chart) on public.products to authenticated;
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- Team & permissions, activity log, saved addresses, one account per phone,
+-- category editor, guest editing. Added October 2026.
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- First run: the earliest admin becomes the main owner; other existing admins keep full access.
+do $$
+declare first_admin uuid;
+begin
+  if not exists (select 1 from public.profiles where role = 'owner') then
+    select id into first_admin from public.profiles where role = 'admin' order by created_at limit 1;
+    if first_admin is not null then
+      update public.profiles set role = 'owner' where id = first_admin;
+      update public.profiles set perms = array['orders.view','orders.manage','orders.edit','orders.refund','orders.delete',
+        'customers.view','customers.edit','customers.block','products.edit','categories.edit','reviews.manage','pages.edit',
+        'settings.edit','promos.edit','insights.view','export.data','activity.view']
+      where role = 'admin' and perms = '{}';
+    end if;
+  end if;
+end $$;
+
+-- ───────────── one account per phone number ─────────────
+update public.profiles p set phone = public.norm_phone(p.phone)
+where p.phone <> public.norm_phone(p.phone)
+  and not exists (select 1 from public.profiles q where q.id <> p.id and q.phone = public.norm_phone(p.phone));
+
+create or replace function public.profile_phone_guard()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  new.phone := public.norm_phone(new.phone);
+  if new.phone <> '' and exists (select 1 from public.profiles where phone = new.phone and id <> new.id) then
+    raise exception 'PHONE_TAKEN';
+  end if;
+  return new;
+end $$;
+drop trigger if exists profiles_phone_guard on public.profiles;
+create trigger profiles_phone_guard before insert or update of phone on public.profiles
+  for each row execute function public.profile_phone_guard();
+do $$ begin
+  create unique index if not exists profiles_phone_uniq on public.profiles(phone) where phone <> '';
+exception when unique_violation then
+  raise notice 'Some existing accounts share a phone number. New duplicates are blocked; the Customers page marks the existing ones.';
+end $$;
+
+-- sign-up form: is this number free? (true / false only)
+create or replace function public.phone_available(p_phone text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select not exists (select 1 from public.profiles where phone = public.norm_phone(p_phone) and public.norm_phone(p_phone) <> '');
+$$;
+
+-- ───────────── saved addresses ─────────────
+create or replace function public.address_before_save()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    if (select count(*) from public.addresses where user_id = new.user_id) >= 10 then raise exception 'TOO_MANY_ADDRESSES'; end if;
+    if not exists (select 1 from public.addresses where user_id = new.user_id) then new.is_default := true; end if;
+  end if;
+  if new.is_default then
+    update public.addresses set is_default = false where user_id = new.user_id and id <> new.id and is_default;
+  end if;
+  return new;
+end $$;
+drop trigger if exists addresses_before_save on public.addresses;
+create trigger addresses_before_save before insert or update on public.addresses
+  for each row execute function public.address_before_save();
+
+alter table public.addresses enable row level security;
+drop policy if exists addresses_own on public.addresses;
+drop policy if exists addresses_staff_read on public.addresses;
+drop policy if exists addresses_staff_write on public.addresses;
+create policy addresses_own on public.addresses for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy addresses_staff_read on public.addresses for select using (public.can('customers.view'));
+create policy addresses_staff_write on public.addresses for all using (public.can('customers.edit')) with check (public.can('customers.edit'));
+revoke all on public.addresses from anon;
+grant select, insert, update, delete on public.addresses to authenticated;
+
+-- ───────────── who may change which part of the settings ─────────────
+create or replace function public.settings_guard()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare k text;
+begin
+  if auth.uid() is null or public.is_owner() then return new; end if;
+  for k in select jsonb_object_keys(coalesce(old.data, '{}'::jsonb) || coalesce(new.data, '{}'::jsonb)) loop
+    if (old.data->k) is distinct from (new.data->k)
+       and not public.can(case k when 'pages' then 'pages.edit' when 'categories' then 'categories.edit' else 'settings.edit' end) then
+      raise exception 'FORBIDDEN';
+    end if;
+  end loop;
+  return new;
+end $$;
+drop trigger if exists settings_guard on public.settings;
+create trigger settings_guard before update on public.settings for each row execute function public.settings_guard();
+
+-- ───────────── activity log ─────────────
+-- Every change made by the owner or staff is written here automatically, with what changed (before → after).
+create or replace function public.log_row_change()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  uid uuid := auth.uid(); nm text; o jsonb; n jsonb; r jsonb; d jsonb := '{}'::jsonb; k text; eid text; lbl text;
+  skip text[] := array['updated_at','popularity','history','changes','restocked'];
+begin
+  if uid is null then return null; end if;
+  select coalesce(nullif(name, ''), email) into nm from public.profiles where id = uid and role in ('owner','admin');
+  if not found then return null; end if;                       -- customers' own actions aren't logged here
+  if tg_op <> 'INSERT' then o := to_jsonb(old); end if;
+  if tg_op <> 'DELETE' then n := to_jsonb(new); end if;
+  r := coalesce(n, o);
+  if tg_op = 'UPDATE' then
+    if tg_table_name = 'settings' then
+      for k in select jsonb_object_keys(coalesce(o->'data', '{}'::jsonb) || coalesce(n->'data', '{}'::jsonb)) loop
+        if (o->'data'->k) is distinct from (n->'data'->k) then d := d || jsonb_build_object(k, jsonb_build_array(o->'data'->k, n->'data'->k)); end if;
+      end loop;
+    else
+      for k in select jsonb_object_keys(n) loop
+        if k <> all(skip) and (o->k) is distinct from (n->k) then d := d || jsonb_build_object(k, jsonb_build_array(o->k, n->k)); end if;
+      end loop;
+    end if;
+    if d = '{}'::jsonb then return null; end if;
+    -- stock moved by an order's status change is already explained by that order's entry
+    if tg_table_name = 'products' and pg_trigger_depth() > 1 and (select array_agg(x) from jsonb_object_keys(d) x) = array['stock'] then return null; end if;
+  elsif tg_op = 'DELETE' then d := jsonb_build_object('before', o);
+  else d := jsonb_build_object('after', n);
+  end if;
+  eid := coalesce(r->>'order_no', r->>'code', r->>'chat_id', r->>'email', r->>'phone', r->>'id', '');
+  if tg_table_name = 'products' then eid := r->>'id'; end if;
+  if tg_table_name = 'addresses' then eid := r->>'user_id'; end if;
+  if tg_table_name = 'blocked_phones' then eid := r->>'phone'; end if;
+  if tg_table_name = 'settings' then eid := 'settings'; end if;
+  lbl := case tg_table_name
+    when 'orders' then r->'customer'->>'name'
+    when 'products' then r->>'name'
+    when 'profiles' then coalesce(nullif(r->>'name', ''), r->>'email')
+    when 'reviews' then r->>'name'
+    when 'addresses' then concat_ws(' · ', nullif(r->>'label', ''), r->>'city')
+    when 'telegram_chats' then r->>'title'
+    when 'staff_invites' then r->>'email'
+    else '' end;
+  insert into public.activity (actor, actor_name, action, entity, entity_id, label, details)
+  values (uid, coalesce(nm, ''), lower(tg_op), tg_table_name, coalesce(eid, ''), coalesce(lbl, ''), d);
+  return null;
+end $$;
+
+do $$
+declare tb text;
+begin
+  foreach tb in array array['orders','products','settings','promo_codes','reviews','profiles','blocked_phones','addresses','staff_invites','telegram_chats'] loop
+    execute format('drop trigger if exists %I on public.%I', tb || '_activity', tb);
+    execute format('create trigger %I after insert or update or delete on public.%I for each row execute function public.log_row_change()', tb || '_activity', tb);
+  end loop;
+end $$;
+
+-- things that aren't row changes (signing in, exporting data)
+create or replace function public.log_event(p_action text, p_label text default '', p_details jsonb default '{}'::jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare nm text;
+begin
+  if p_action not in ('sign_in','export') then raise exception 'INVALID:action'; end if;
+  select coalesce(nullif(name, ''), email) into nm from public.profiles where id = auth.uid() and role in ('owner','admin');
+  if not found then return; end if;
+  insert into public.activity (actor, actor_name, action, entity, label, details)
+  values (auth.uid(), nm, p_action, 'dashboard', left(coalesce(p_label, ''), 200), coalesce(p_details, '{}'::jsonb));
+  delete from public.activity where at < now() - interval '3 years';
+end $$;
+
+alter table public.activity enable row level security;
+drop policy if exists activity_read on public.activity;
+create policy activity_read on public.activity for select using (
+  public.can('activity.view') or actor = auth.uid() or (entity = 'orders' and public.can('orders.view')));
+revoke all on public.activity from anon, authenticated;
+grant select on public.activity to authenticated;
+
+-- ───────────── team (main owner only) ─────────────
+create or replace function public.staff_perm_list()
+returns text[] language sql immutable as $$
+  select array['orders.view','orders.manage','orders.edit','orders.refund','orders.delete',
+               'customers.view','customers.edit','customers.block','products.edit','categories.edit','reviews.manage',
+               'pages.edit','settings.edit','promos.edit','insights.view','export.data','activity.view'];
+$$;
+-- keep only known permissions, and add what they depend on (e.g. editing orders needs seeing them)
+create or replace function public.clean_perms(p text[])
+returns text[] language sql immutable as $$
+  select coalesce(array_agg(distinct x order by x), '{}') from (
+    select x from unnest(coalesce(p, '{}')) x where x = any(public.staff_perm_list())
+    union select 'orders.view' where exists (select 1 from unnest(coalesce(p, '{}')) y where y like 'orders.%' or y = 'export.data')
+    union select 'customers.view' where exists (select 1 from unnest(coalesce(p, '{}')) y where y like 'customers.%' or y = 'export.data')
+  ) z;
+$$;
+
+create or replace function public.admin_team()
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_owner() then raise exception 'FORBIDDEN'; end if;
+  return jsonb_build_object(
+    'staff', (select coalesce(jsonb_agg(jsonb_build_object('id', p.id, 'name', p.name, 'email', p.email, 'phone', p.phone, 'role', p.role,
+                'perms', p.perms, 'suspended', p.suspended, 'created_at', p.created_at, 'last_sign_in', u.last_sign_in_at,
+                'confirmed', u.email_confirmed_at is not null) order by p.role desc, p.created_at), '[]'::jsonb)
+              from public.profiles p join auth.users u on u.id = p.id where p.role in ('owner','admin')),
+    'invites', (select coalesce(jsonb_agg(i order by i.created_at desc), '[]'::jsonb) from public.staff_invites i));
+end $$;
+
+-- Add a staff member by email. If they already have an account it becomes a staff account right away;
+-- otherwise the dashboard creates the account and the invite is applied when it's saved.
+create or replace function public.admin_invite_staff(p_email text, p_name text, p_perms text[])
+returns text language plpgsql security definer set search_path = public as $$
+declare em text := lower(trim(coalesce(p_email, ''))); pr public.profiles%rowtype;
+begin
+  if not public.is_owner() then raise exception 'FORBIDDEN'; end if;
+  if em !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then raise exception 'INVALID:email'; end if;
+  select * into pr from public.profiles where lower(email) = em;
+  if found then
+    if pr.role = 'owner' then raise exception 'FORBIDDEN'; end if;
+    if pr.blocked then raise exception 'BLOCKED'; end if;
+    update public.profiles set role = 'admin', perms = public.clean_perms(p_perms), suspended = false,
+           name = coalesce(nullif(name, ''), coalesce(p_name, '')) where id = pr.id;
+    delete from public.staff_invites where email = em;
+    return 'promoted';
+  end if;
+  insert into public.staff_invites (email, name, perms, invited_by) values (em, coalesce(p_name, ''), public.clean_perms(p_perms), auth.uid())
+  on conflict (email) do update set name = excluded.name, perms = excluded.perms, invited_by = excluded.invited_by, created_at = now();
+  return 'invited';
+end $$;
+
+create or replace function public.admin_update_staff(p_id uuid, p jsonb)
+returns public.profiles language plpgsql security definer set search_path = public as $$
+declare pr public.profiles%rowtype;
+begin
+  if not public.is_owner() then raise exception 'FORBIDDEN'; end if;
+  select * into pr from public.profiles where id = p_id for update;
+  if not found or pr.role <> 'admin' then raise exception 'NOT_FOUND:staff'; end if;
+  update public.profiles set
+    perms = case when p ? 'perms' then public.clean_perms(array(select jsonb_array_elements_text(p->'perms'))) else perms end,
+    suspended = coalesce((p->>'suspended')::boolean, suspended),
+    name = coalesce(nullif(trim(p->>'name'), ''), name)
+  where id = p_id returning * into pr;
+  return pr;
+end $$;
+
+create or replace function public.admin_remove_staff(p_id uuid)
+returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_owner() then raise exception 'FORBIDDEN'; end if;
+  update public.profiles set role = 'customer', perms = '{}', suspended = false where id = p_id and role = 'admin';
+  delete from public.telegram_chats where user_id = p_id;
+  return found;
+end $$;
+
+create or replace function public.admin_cancel_invite(p_email text)
+returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_owner() then raise exception 'FORBIDDEN'; end if;
+  delete from public.staff_invites where email = lower(trim(p_email));
+  return found;
+end $$;
+
+-- ───────────── categories editor ─────────────
+-- p_cats: the full new list. p_moves: where products go when a name changes or a category / subcategory is removed:
+-- [{cat, sub?, to_cat, to_sub?, keep_sub?}] (subcategory moves first, then whole categories).
+create or replace function public.admin_save_categories(p_cats jsonb, p_moves jsonb)
+returns int language plpgsql security definer set search_path = public as $$
+declare m jsonb; names text[]; bad text; n int := 0; c int;
+begin
+  if not public.can('categories.edit') then raise exception 'FORBIDDEN'; end if;
+  if jsonb_typeof(p_cats) <> 'array' or jsonb_array_length(p_cats) = 0 then raise exception 'INVALID:categories'; end if;
+  select array_agg(trim(x->>'name')) into names from jsonb_array_elements(p_cats) x;
+  if exists (select 1 from unnest(names) x where coalesce(x, '') = '') or (select count(distinct lower(x)) from unnest(names) x) <> array_length(names, 1)
+    then raise exception 'INVALID:category_names'; end if;
+  if exists (select 1 from jsonb_array_elements(p_cats) x
+             where (select count(*) from jsonb_array_elements_text(coalesce(x->'subs', '[]'::jsonb)) s)
+                <> (select count(distinct lower(trim(s))) from jsonb_array_elements_text(coalesce(x->'subs', '[]'::jsonb)) s where trim(s) <> ''))
+    then raise exception 'INVALID:subcategory_names'; end if;
+
+  for m in select x from jsonb_array_elements(coalesce(p_moves, '[]'::jsonb)) x order by (x->>'sub') is null loop
+    update public.products set cat = m->>'to_cat',
+           sub = case when (m->>'keep_sub')::boolean then sub else nullif(m->>'to_sub', '') end
+    where cat = m->>'cat' and (m->>'sub' is null or sub = m->>'sub');
+    get diagnostics c = row_count; n := n + c;
+  end loop;
+
+  select p.cat into bad from public.products p where not (p.cat = any(names)) limit 1;
+  if bad is not null then raise exception 'CATEGORY_IN_USE:%', bad; end if;
+  -- a subcategory that no longer exists: the product simply has none
+  update public.products p set sub = null
+  where p.sub is not null and not exists (select 1 from jsonb_array_elements(p_cats) x, jsonb_array_elements_text(coalesce(x->'subs', '[]'::jsonb)) s
+                                          where x->>'name' = p.cat and s = p.sub);
+  update public.settings set data = jsonb_set(data, '{categories}', p_cats) where id = 1;
+  return n;
+end $$;
+
+-- ───────────── guests: correct the details on all their orders ─────────────
+create or replace function public.admin_update_guest(p_phone text, p jsonb)
+returns int language plpgsql security definer set search_path = public as $$
+declare ph text := public.norm_phone(p_phone); np text; n int; patch jsonb := '{}'::jsonb;
+begin
+  if not public.can('customers.edit') or not public.can('orders.edit') then raise exception 'FORBIDDEN'; end if;
+  if p ? 'name' then
+    if char_length(trim(p->>'name')) < 2 then raise exception 'INVALID:name'; end if;
+    patch := patch || jsonb_build_object('name', trim(p->>'name'));
+  end if;
+  if p ? 'email' then
+    if lower(trim(p->>'email')) !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then raise exception 'INVALID:email'; end if;
+    patch := patch || jsonb_build_object('email', lower(trim(p->>'email')));
+  end if;
+  if p ? 'phone' then
+    np := public.norm_phone(p->>'phone');
+    if np !~ '^01[0125][0-9]{8}$' then raise exception 'INVALID:phone'; end if;
+    patch := patch || jsonb_build_object('phone', np);
+  end if;
+  update public.orders set customer = customer || patch where user_id is null and public.norm_phone(customer->>'phone') = ph;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- ───────────── permissions for this section ─────────────
+revoke execute on function public.log_row_change()                      from public, anon, authenticated;
+revoke execute on function public.settings_guard()                      from public, anon, authenticated;
+revoke execute on function public.profile_phone_guard()                 from public, anon, authenticated;
+revoke execute on function public.address_before_save()                 from public, anon, authenticated;
+revoke execute on function public.link_orders_for(uuid)                 from public, anon, authenticated;
+revoke execute on function public.profile_after_change()                from public, anon, authenticated;
+revoke execute on function public.user_confirmed()                      from public, anon, authenticated;
+revoke execute on function public.order_attach_account()                from public, anon, authenticated;
+revoke execute on function public.log_event(text, text, jsonb)          from public, anon;
+revoke execute on function public.admin_team()                          from public, anon;
+revoke execute on function public.admin_invite_staff(text, text, text[]) from public, anon;
+revoke execute on function public.admin_update_staff(uuid, jsonb)       from public, anon;
+revoke execute on function public.admin_remove_staff(uuid)              from public, anon;
+revoke execute on function public.admin_cancel_invite(text)             from public, anon;
+revoke execute on function public.admin_save_categories(jsonb, jsonb)   from public, anon;
+revoke execute on function public.admin_update_guest(text, jsonb)       from public, anon;
+revoke execute on function public.admin_link_orders(uuid, text)         from public, anon;
+revoke execute on function public.admin_telegram_connect()              from public, anon;
+revoke execute on function public.admin_telegram_bot(bigint)            from public, anon;
+revoke execute on function public.admin_telegram_check(text, bigint)    from public, anon;
+revoke execute on function public.admin_telegram_remove(text)           from public, anon;
+grant  execute on function public.log_event(text, text, jsonb)          to authenticated;
+grant  execute on function public.admin_team()                          to authenticated;
+grant  execute on function public.admin_invite_staff(text, text, text[]) to authenticated;
+grant  execute on function public.admin_update_staff(uuid, jsonb)       to authenticated;
+grant  execute on function public.admin_remove_staff(uuid)              to authenticated;
+grant  execute on function public.admin_cancel_invite(text)             to authenticated;
+grant  execute on function public.admin_save_categories(jsonb, jsonb)   to authenticated;
+grant  execute on function public.admin_update_guest(text, jsonb)       to authenticated;
+grant  execute on function public.admin_link_orders(uuid, text)         to authenticated;
+grant  execute on function public.admin_telegram_connect()              to authenticated;
+grant  execute on function public.admin_telegram_bot(bigint)            to authenticated;
+grant  execute on function public.admin_telegram_check(text, bigint)    to authenticated;
+grant  execute on function public.admin_telegram_remove(text)           to authenticated;
+grant  execute on function public.phone_available(text)                 to anon, authenticated;
+grant  execute on function public.is_owner()                            to anon, authenticated;
+grant  execute on function public.can(text)                             to anon, authenticated;
+alter table public.staff_invites enable row level security;
+alter table public.telegram_chats enable row level security;
+alter table public.telegram_codes enable row level security;
+alter table public.telegram_bot   enable row level security;
+revoke all on public.staff_invites, public.telegram_chats, public.telegram_codes, public.telegram_bot from anon, authenticated;

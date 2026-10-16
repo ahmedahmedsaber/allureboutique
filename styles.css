@@ -592,3 +592,15 @@ html[dir="rtl"] .summary .row b,html[dir="rtl"] .price,html[dir="rtl"] .num{unic
 .rev-summary .avg{font-family:var(--serif);font-size:34px;color:var(--gold);font-variant-numeric:lining-nums;}
 .rev-summary .st{color:var(--gold);letter-spacing:2px;}
 @media(max-width:768px){ .wa-float{left:14px;bottom:14px;width:52px;height:52px;} }
+
+/* saved addresses (account page + checkout) */
+.addr-pick{margin-top:14px;}
+.addr-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;}
+.addr-card{border:1px solid var(--line);padding:18px 20px;background:var(--bg);}
+.addr-card .nm{font-size:14px;font-weight:600;letter-spacing:.5px;}
+.addr-card .ln{font-size:13px;color:var(--soft);line-height:1.6;margin-top:6px;}
+.addr-card .acts{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;}
+.addr-badge{display:inline-block;font-size:9px;letter-spacing:2px;font-weight:700;padding:3px 8px;border-radius:100px;background:var(--gold);color:var(--ongold);margin-inline-start:6px;vertical-align:middle;}
+.checks{display:flex;gap:18px;flex-wrap:wrap;}
+.checks label{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;}
+.checks input{accent-color:var(--gold);width:16px;height:16px;}

@@ -77,6 +77,14 @@ with sync_playwright() as p:
     pg.click('[data-act=placeOrder]'); pg.wait_for_selector('.confirm')
     no2 = pg.locator('.confirm .eyebrow').inner_text().split()[-1]
     ok(psql(f"select total from orders where order_no='{no2}'") == '4270', 'account order placed (4,200 + 70)')
+    pg.wait_for_timeout(800)
+    ok(psql("select count(*) || ':' || bool_and(is_default) from addresses") == '1:true', 'new delivery address saved to the account (default)')
+    pg.goto(BASE + '#/product/noir'); pg.wait_for_selector('.pdp-h1'); pg.click('[data-act=addCart]')
+    pg.goto(BASE + '#/checkout'); pg.wait_for_selector('#co-name')
+    ok(pg.locator('.addr-pick [data-act=coAddr]').count() == 2 and pg.locator('#co-street').count() == 0, 'checkout offers the saved address (plus "use a new address")')
+    shot(pg, '01b_saved_address', False)
+    pg.goto(BASE + '#/addresses'); pg.wait_for_selector('.addr-card')
+    ok('90th St' in pg.locator('.addr-card').inner_text(), 'Addresses tab lists the saved address')
     c1.close()
 
     # ── owner dashboard ──
@@ -84,18 +92,19 @@ with sync_playwright() as p:
     pg.goto(BASE + '#/account'); pg.click('[data-act=authMode][data-m=signup]')
     pg.fill('#au-name', 'Owner'); pg.fill('#au-phone', '01000000000'); pg.fill('#au-email', 'owner@allure.com'); pg.fill('#au-password', 'owner123')
     pg.click('form[data-form=auth] button[type=submit]'); pg.wait_for_selector('.acct-cover h1')
-    psql("update profiles set role='admin' where email='owner@allure.com'")
+    psql("update profiles set role='owner' where email='owner@allure.com'")
     pg.goto(BASE + 'admin.html'); pg.wait_for_selector('.adm-nav'); pg.wait_for_selector('#revChart svg, #revChart .chart-empty')
 
     # edit order: 2 → 3 necklaces at 2,500 each + 50 delivery
     nav(pg, 'ORDERS'); pg.wait_for_selector('.atbl')
-    pg.click('.tabs2 >> text=All'); pg.click(f'tr[data-no="{no1}"]'); pg.wait_for_selector('#drawer.open .no')
+    pg.click('.tabs2 >> text=All'); pg.click(f'tr[data-no="{no1}"]'); pg.wait_for_selector('.opage')
+    ok(f'#/order/{no1}' in pg.url, 'order opens on its own page')
     pg.click('[data-act=oform][data-f=edit]'); pg.wait_for_selector('.oedit')
     pg.fill('[data-oi="0"][data-k=qty]', '3'); pg.fill('[data-oi="0"][data-k=unit]', '2500'); pg.fill('[data-oe=delivery_fee]', '50'); pg.fill('[data-oe=note]', 'customer asked for 3')
     ok('7,550' in pg.locator('#oeTotal').inner_text(), 'editor shows the new total live')
     shot(pg, '02_edit_order', False)
     pg.click('[data-act=doEdit]'); pg.wait_for_timeout(900)
-    ok(psql(f"select total || ',' || jsonb_array_length(changes) from orders where order_no='{no1}'") == '7550,1', 'order edited and logged')
+    ok(psql(f"select total || ',' || jsonb_array_length(changes) from orders where order_no='{no1}'") == '7550,2', 'order edited and logged (after the “linked to account” note)')
     ok(psql("select stock from products where id='cairo'") == '7', 'edit took one more necklace from stock')
     # exchange: necklaces → hoops
     pg.click('[data-act=oform][data-f=exchange]'); pg.wait_for_selector('.oedit')
@@ -109,20 +118,32 @@ with sync_playwright() as p:
     pg.click('[data-act=doRefund]'); pg.wait_for_timeout(900); shot(pg, '03_after_refund', False)
     ok(psql(f"select status || ',' || refunded from orders where order_no='{no1}'") == 'refunded,3000', 'return / refund recorded')
     ok(psql("select stock from products where id='sable'") == '10', 'returned piece back in stock')
-    ok(pg.locator('.log-row').count() == 3, 'change log lists edit, exchange and refund')
-    pg.click('#drawer [data-act=closeAll]')
+    ok(pg.locator('.log-row').count() == 4, 'change log lists linking, edit, exchange and refund')
+    pg.wait_for_selector('.act-list .act-row'); shot(pg, '03b_order_page')
+    ok(pg.locator('.act-list .act-row').count() >= 3 and 'Owner' in pg.locator('.act-list').inner_text(), 'order page shows who did what')
+    pg.goto(BASE + f'admin.html#/order/{no2}'); pg.wait_for_selector('.opage')
+    pg.click('[data-act=setStatus][data-s=received]'); pg.wait_for_timeout(700)
+    pg.click('[data-act=setStatus][data-s=shipped]'); pg.wait_for_timeout(700)
+    ok(psql(f"select status from orders where order_no='{no2}'") == 'shipped', 'a received order can be moved back to shipped')
     # delete a test order
-    pg.click(f'tr[data-no="{no2}"]'); pg.wait_for_selector('#drawer.open .no')
     pg.click('[data-act=oform][data-f=delete]'); pg.click('[data-act=doDelete]'); pg.wait_for_timeout(900)
+    ok(pg.url.endswith('#/orders'), 'after deleting, back to the orders list')
     ok(psql(f"select count(*) from orders where order_no='{no2}'") == '0', 'order deleted')
     ok(psql("select stock from products where id='mayfair'") == '10', 'deleted order’s piece returned to stock')
 
     # customers: block the account (and its phone)
     nav(pg, 'CUSTOMERS'); pg.wait_for_selector('.tiles'); shot(pg, '04_customers')
-    pg.click('tr[data-act=openCust] >> nth=0'); pg.wait_for_selector('#drawer.open')
+    ok(pg.locator('tr[data-act=openCust] >> text=owner@allure.com').count() == 0, 'staff accounts are not listed as customers')
+    pg.click('tr[data-act=openCust] >> nth=0'); pg.wait_for_selector('#custSpend')
+    ok('#/customer/u' in pg.url, 'customer opens on its own page'); pg.wait_for_timeout(400); shot(pg, '04b_customer_page')
+    ok(pg.locator('#custSpend svg').count() == 1, 'customer spending chart drawn')
+    pg.click('.tabs2 >> text=Addresses'); pg.wait_for_selector('.addr')
+    ok('90th St' in pg.locator('.addr-grid').inner_text(), 'team sees the customer saved addresses')
+    pg.click('.tabs2 >> text=Details & blocking'); pg.wait_for_selector('#ce-note')
+    pg.fill('#ce-note', 'VIP - loves pearls'); pg.click('form[data-form=custEdit] button[type=submit]'); pg.wait_for_timeout(700)
+    ok(psql("select staff_note from profiles where email='nour@example.com'") == 'VIP - loves pearls', 'team note saved on the customer')
     pg.fill('#cb-reason', 'test block'); pg.click('[data-act=blockAcc]'); pg.wait_for_timeout(900)
     ok(psql("select blocked from profiles where email='nour@example.com'") == 't' and psql("select count(*) from blocked_phones where phone='01012345678'") == '1', 'account and phone blocked')
-    pg.click('#drawer [data-act=closeAll]')
 
     # product: photo (cropped) + size chart
     nav(pg, 'PRODUCTS'); pg.wait_for_selector('.atbl'); pg.click('text=+ ADD PRODUCT'); pg.wait_for_selector('#pe-name')
@@ -145,12 +166,12 @@ with sync_playwright() as p:
     ok('Our promise' in psql("select data->'pages'->'policy'->>'en' from settings"), 'policy page saved')
 
     # settings: reviews summary off
-    nav(pg, 'SETTINGS'); pg.wait_for_selector('[data-set="reviews.showSummary"]')
-    pg.uncheck('[data-set="reviews.showSummary"]')
+    nav(pg, 'SETTINGS'); pg.wait_for_selector('[data-set="reviews.showAverage"]')
+    pg.uncheck('[data-set="reviews.showAverage"]')
     pg.fill('[data-set="mailer.fromName"]', 'ALLURE Boutique'); pg.fill('[data-set="mailer.fromEmail"]', 'orders@allure-boutique.org')
     pg.fill('[data-set="mailer.replyTo"]', 'owner@gmail.com'); pg.fill('[data-set="instapayLink"]', 'https://ipn.eg/S/allure/instapay/ui')
     pg.click('form[data-form=settings] button[type=submit]'); pg.wait_for_timeout(800)
-    ok(psql("select data->'reviews'->>'showSummary' from settings") == 'false', 'review summary switched off')
+    ok(psql("select data->'reviews'->>'showAverage' || ',' || coalesce(data->'reviews'->>'showCount', 'true') from settings") == 'false,true', 'average switched off, count still on')
     ok(psql("select data->'mailer'->>'fromEmail' from settings") == 'orders@allure-boutique.org'
        and psql("select data->>'email' from settings") == 'hello@allureboutique.com'
        and psql("select data->>'instapayLink' from settings").endswith('/ui'), 'email sender saved, shop contact email kept')
@@ -171,16 +192,89 @@ with sync_playwright() as p:
     pg.fill('#te-to', 'owner@gmail.com'); pg.click('form[data-form=testEmail] button[type=submit]'); pg.wait_for_timeout(600)
     ok(psql("select count(*) from net.calls where url = 'https://api.resend.com/emails'") == '1', 'test email sent through Resend')
 
+    # categories: rename a subcategory, products follow
+    nav(pg, 'CATEGORIES'); pg.wait_for_selector('.cat-ed')
+    others = pg.locator('.cat-ed').nth(1).locator('[data-k=name][data-sub]').last
+    ok(others.input_value() == 'Others', 'categories page lists subcategories')
+    others.fill('Other bags'); pg.click('[data-act=catSave]'); pg.wait_for_timeout(1000)
+    ok(psql("select count(*) from products where sub = 'Others'") == '0' and int(psql("select count(*) from products where sub = 'Other bags'")) > 0, 'renamed subcategory: products moved with it')
+    ok('Other bags' in psql("select data->'categories'->1->>'subs' from settings"), 'category list saved')
+    shot(pg, '06b_categories')
+
+    # team: add a staff member who can only handle orders
+    nav(pg, 'TEAM'); pg.wait_for_selector('form[data-form=staffAdd]')
+    pg.click('[data-act=permPreset][data-scope=new] >> nth=0')
+    pg.fill('#ns-name', 'Sara'); pg.fill('#ns-email', 'sara@allure.com'); pg.fill('#ns-pw', 'sara1234')
+    pg.click('form[data-form=staffAdd] button[type=submit]'); pg.wait_for_selector('.staff >> text=sara@allure.com')
+    ok(psql("select role || ':' || array_to_string(perms, ',') from profiles where email='sara@allure.com'") == 'admin:customers.view,orders.manage,orders.view', 'staff account created with the chosen access')
+    ok(pg.locator('.adm-nav >> text=TEAM').count() == 1, 'owner still signed in as owner (creating the staff login did not switch accounts)')
+    shot(pg, '06c_team')
+
+    # telegram: connect with one tap
+    psql("insert into vault.secrets (name, secret) values ('telegram_bot_token', '123:ABC') on conflict (name) do nothing")
+    pg.goto(BASE + 'admin.html#/notifications'); pg.reload(); pg.wait_for_selector('[data-act=tgConnect]')
+    pg.click('[data-act=tgConnect]'); pg.wait_for_timeout(500)
+    rq = psql("select id from net.calls where url like '%/getMe' order by id desc limit 1")
+    psql(f"""insert into net._http_response (id, status_code, content) values ({rq}, 200, '{{"ok":true,"result":{{"username":"allure_test_bot"}}}}')""")
+    pg.wait_for_selector('a[href*="t.me/allure_test_bot?start="]')
+    code = pg.locator('a[href*="?start="]').get_attribute('href').split('start=')[1]
+    import time as _t
+    g = ''
+    for _ in range(30):
+        g = psql("select id from net.calls where url like '%/getUpdates' order by id desc limit 1")
+        if g: break
+        _t.sleep(0.5)
+    psql(f"""insert into net._http_response (id, status_code, content) values ({g}, 200, '{{"ok":true,"result":[{{"update_id":7,"message":{{"text":"/start {code}","chat":{{"id":555,"type":"private","first_name":"Owner"}}}}}}]}}')""")
+    pg.wait_for_selector('text=Connected: Owner', timeout=15000)
+    ok(psql("select title from telegram_chats where chat_id='555'") == 'Owner', 'Telegram connected by pressing Start')
+    shot(pg, '06d_telegram', False)
+
+    if W <= 820:
+        pg.click('[data-act=side]'); pg.wait_for_timeout(350)
+        so = pg.locator('.adm-side [data-act=signOut]'); so.scroll_into_view_if_needed()
+        bx = so.bounding_box()
+        ok(bx is not None and bx['y'] + bx['height'] <= 900, 'phone menu scrolls so SIGN OUT is reachable')
+        shot(pg, '06e_menu', False)
+        pg.keyboard.press('Escape')
+
+    # staff signs in: sees only what they're allowed, and their changes are recorded
+    c4 = ctx(); st = page(c4)
+    st.goto(BASE + 'admin.html'); st.wait_for_selector('#lg-email')
+    st.fill('#lg-email', 'sara@allure.com'); st.fill('#lg-pw', 'sara1234'); st.click('form[data-form=login] button[type=submit]')
+    st.wait_for_selector('.adm-nav')
+    navs = st.locator('.adm-nav button').all_inner_texts()
+    ok(any('ORDERS' in x for x in navs) and not any(('SETTINGS' in x) or ('TEAM' in x) or ('PRODUCTS' in x) for x in navs), 'staff menu shows only allowed pages: ' + ', '.join(x.split(chr(10))[0] for x in navs))
+    st.goto(BASE + 'admin.html#/settings'); st.wait_for_timeout(600)
+    ok('No access' in st.locator('.adm-main').inner_text(), 'staff cannot open Settings by typing the address')
+    st.goto(BASE + 'admin.html#/orders/all'); st.wait_for_selector('.atbl')
+    st.locator('tr[data-act=openOrder]').first.click(); st.wait_for_selector('.opage')
+    sno = st.url.split('/order/')[1]
+    ok(st.locator('[data-act=oform]').count() == 0, 'staff without edit access sees no edit / refund / delete buttons')
+    st.locator('[data-act=setStatus]').first.click(); st.wait_for_timeout(800)
+    c4.close()
+    nav(pg, 'ACTIVITY'); pg.wait_for_selector('.act-row')
+    ok('Sara' in pg.locator('.act-list').inner_text() and sno in pg.locator('.act-list').inner_text(), 'activity log shows what the staff member did')
+    ok('signed in' in pg.locator('.act-list').inner_text(), 'sign-ins are logged')
+    shot(pg, '06f_activity')
+
     # ── shop reflects it all (fresh customer browser) ──
     c3 = ctx(); s = page(c3)
     s.goto(BASE + '#/page/policy'); s.wait_for_selector('.prose h2')
     ok(s.locator('.prose h2').first.inner_text() == 'Our promise' and s.locator('.prose b').first.inner_text() == 'ALLURE', 'shop shows the edited policy page')
     s.goto(BASE); s.wait_for_selector('.card'); s.wait_for_timeout(600)
-    ok(s.locator('.rev-summary').count() == 0, 'review summary hidden when switched off')
+    ok(s.locator('.rev-summary .avg').count() == 0 and 'reviews' in s.locator('.rev-summary').inner_text(), 'shop hides the average but still shows the number of reviews')
     s.goto(BASE + '#/product/luna-pearl-bracelet-111'); s.wait_for_selector('.pdp-h1')
     s.click('[data-act=sizeChart]'); s.wait_for_selector('#lightbox:not([hidden]) img')
     ok(s.locator('#lightbox img').evaluate('i => i.naturalWidth') > 0, 'size chart opens on the product page'); shot(s, '07_size_chart', False)
     s.click('[data-act=lbClose]')
+    # one account per phone number
+    s.goto(BASE + '#/account'); s.click('[data-act=authMode][data-m=signup]')
+    psql("update profiles set phone = '01027770000' where email = 'sara@allure.com'")
+    s.fill('#au-name', 'Copy Cat'); s.fill('#au-phone', '0102 777 0000'); s.fill('#au-email', 'copy@example.com'); s.fill('#au-password', 'secret123')
+    s.click('form[data-form=auth] button[type=submit]'); s.wait_for_selector('form[data-form=auth] .form-err')
+    ok('already belongs to another account' in s.locator('form[data-form=auth] .form-err').inner_text(), 'sign-up refuses a phone number that another account uses')
+    ok(psql("select count(*) from auth.users where email='copy@example.com'") == '0', 'no duplicate account created')
+    s.goto(BASE + '#/product/luna-pearl-bracelet-111'); s.wait_for_selector('.pdp-h1')
     # blocked phone can't order
     s.click('[data-act=addCart]'); s.goto(BASE + '#/checkout'); s.wait_for_selector('#co-name')
     s.fill('#co-name', 'Blocked Person'); s.fill('#co-email', 'b@example.com'); s.fill('#co-phone', '01012345678')

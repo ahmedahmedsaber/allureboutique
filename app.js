@@ -23,13 +23,15 @@ const S = {
   receipts: store.get('receipts', []),        // recent orders placed on this device (for the confirmation page)
   user: null,                                 // profile row when signed in
   orders: [],                                 // signed-in customer's orders
+  addresses: [],                              // signed-in customer's saved addresses
   loading: true, loadError: '',
   ui: {
     menu: false, cats: false, openCat: {}, search: false, q: '',
     filterOpen: false, sortOpen: false, sort: 'default',
     filter: emptyFilter(), draft: emptyFilter(),
     pdp: null, promoInput: '', promoMsg: null,
-    co: { step: 1, form: {}, fulfil: 'delivery', pay: '', errors: {}, msg: '', busy: false },
+    co: { step: 1, form: {}, fulfil: 'delivery', pay: '', errors: {}, msg: '', busy: false, addrId: null, saveAddr: true },
+    addrForm: null, addrMsg: '',
     auth: { mode: 'signin', form: {}, msg: '', ok: '', busy: false },
     acctTab: 'profile', open: {}, prevOpen: true, profile: null, profileMsg: '',
     fb: { rating: 0, text: '', msg: '', ok: '', busy: false },
@@ -43,7 +45,8 @@ const save = (...keys) => keys.forEach(k => store.set(k, S[k]));
 // Owners belong in the dashboard. Signing in on the shop sends them there; the dashboard's
 // "View shop" opens a read-only preview (?preview=1) where customer-only pages stay closed.
 const PREVIEW = (() => { try { if (new URLSearchParams(location.search).get('preview') === '1') sessionStorage.setItem('au.preview', '1'); return sessionStorage.getItem('au.preview') === '1'; } catch (e) { return false; } })();
-const isOwner = () => !!(S.user && S.user.role === 'admin');
+// the owner and staff use the dashboard, not the shop's account pages
+const isOwner = () => !!(S.user && ['owner', 'admin'].includes(S.user.role) && !S.user.suspended);
 const OWNER_BLOCKED = { account: '', orders: '#/orders', track: '#/orders', checkout: '', reset: '' };
 const toDashboard = (hash = '') => location.replace('admin.html' + hash);
 
@@ -337,6 +340,8 @@ function renderFooter() {
 // ───────────────────────── views ─────────────────────────
 const top4 = flag => PRODUCTS.filter(p => p.flags[flag]).sort((a, b) => (b.inStock - a.inStock) || (b.popularity - a.popularity)).slice(0, 4);
 
+// review summary switches (older settings had one switch, showSummary, for both)
+const revShow = k => { const r = STORE.reviews || {}; return r[k] != null ? r[k] !== false : r.showSummary !== false; };
 function viewHome() {
   const pr = STORE.promo && STORE.promo.enabled !== false ? STORE.promo : null;
   const P = k => I18N.pick(pr[k], pr[k + '_ar']);
@@ -367,7 +372,7 @@ function viewHome() {
   const cats = CATEGORIES.map(c => {
     const n = PRODUCTS.filter(p => p.cat === c.name).length;
     return `<button class="cat-card" data-act="go" data-href="#/shop/${slug(c.name)}">
-      <div class="bgfill" style="background:${c.image ? `url('${esc(c.image)}') center/cover` : c.bg}"></div><div class="shade"></div><span class="tag">${esc(c.tag || c.name.toUpperCase())}</span>
+      <div class="bgfill" style="background:${c.image ? `url('${esc(c.image)}') center/cover` : c.bg}"></div><div class="shade"></div><span class="tag">${esc((isAr() && c.tag_ar) || c.tag || c.name.toUpperCase())}</span>
       <div class="lbl"><div class="nm">${esc(catName(c.name))}</div><div class="ct">${n1(n, '{n} PIECE', '{n} PIECES')} ${arrow()}</div></div></button>`;
   }).join('');
 
@@ -401,7 +406,7 @@ function viewHome() {
     </div></section>
     ${REVIEWS.length ? `<section class="sec" id="reviews" style="padding-bottom:96px">
       ${secHead(t('FROM OUR CLIENTS'), t('Reviews'))}
-      ${S.summary && S.summary.count && (STORE.reviews || {}).showSummary !== false ? `<div class="rev-summary"><span class="avg">${Number(S.summary.average).toFixed(1)}</span><span class="st">${stars(S.summary.average)}</span><span class="muted">${n1(S.summary.count, '{n} review', '{n} reviews')}</span></div>` : ''}
+      ${S.summary && S.summary.count && (revShow('showAverage') || revShow('showCount')) ? `<div class="rev-summary">${revShow('showAverage') ? `<span class="avg">${Number(S.summary.average).toFixed(1)}</span><span class="st">${stars(S.summary.average)}</span>` : ''}${revShow('showCount') ? `<span class="muted">${n1(S.summary.count, '{n} review', '{n} reviews')}</span>` : ''}</div>` : ''}
       ${carousel('revTrack', reviewCards, 'three')}
     </section>` : '<div id="reviews"></div>'}`;
 }
@@ -669,6 +674,9 @@ function viewCheckout() {
   if (!S.cart.length) return viewCart();
   const c = S.ui.co, f = c.form, e = c.errors;
   if (S.user && !f._pre) Object.assign(f, { name: f.name || S.user.name, email: f.email || S.user.email, phone: f.phone || S.user.phone, _pre: 1 });
+  const saved = S.user ? S.addresses : [];
+  if (saved.length && c.addrId == null) useAddress(saved.find(a => a.is_default) || saved[0]);
+  const newAddr = !saved.length || c.addrId === 'new';
   const tt = totals({ city: f.city, fulfil: c.fulfil });
   const inp = (k, label, type = 'text', full = false, ph = '') => `<div class="${full ? 'full' : ''}"><label for="co-${k}">${label}</label>
     <input id="co-${k}" class="field${e[k] ? ' err' : ''}" type="${type}" data-bind="co.form.${k}" value="${esc(f[k] || '')}" placeholder="${ph}"></div>`;
@@ -686,10 +694,14 @@ function viewCheckout() {
       <div class="choice${c.fulfil === 'delivery' ? ' on' : ''}" data-act="coFulfil" data-v="delivery"><span class="radio${c.fulfil === 'delivery' ? ' on' : ''}"></span><div><div class="ct">${t('Deliver to my address')}</div><div class="cs">${t('Delivery across Egypt · fees by city')}</div></div></div>
       <div class="choice${c.fulfil === 'pickup' ? ' on' : ''}" data-act="coFulfil" data-v="pickup"><span class="radio${c.fulfil === 'pickup' ? ' on' : ''}"></span><div><div class="ct">${t('Receive from our branch')}</div><div class="cs">${esc(sAddress())} · ${esc(sHours())}${STORE.mapsUrl ? ` · <a href="${esc(STORE.mapsUrl)}" target="_blank" rel="noopener" style="color:var(--gold)">${t('Location')} ↗</a>` : ''}</div></div></div>
     </div>
-    ${c.fulfil === 'delivery' ? `<div class="frm" style="margin-top:12px">
+    ${c.fulfil === 'delivery' && saved.length ? `<div class="addr-pick">${saved.map(a => `<div class="choice${c.addrId === a.id ? ' on' : ''}" data-act="coAddr" data-id="${a.id}"><span class="radio${c.addrId === a.id ? ' on' : ''}"></span>
+        <div><div class="ct">${esc(a.label || t('Saved address'))}</div><div class="cs" dir="auto">${esc(addrLine(a))} · ${money(deliveryFee(a.city))}</div></div></div>`).join('')}
+        <div class="choice${newAddr ? ' on' : ''}" data-act="coAddr" data-id="new"><span class="radio${newAddr ? ' on' : ''}"></span><div><div class="ct">${t('Use a new address')}</div></div></div></div>` : ''}
+    ${c.fulfil === 'delivery' && newAddr ? `<div class="frm" style="margin-top:12px">
       <div><label for="co-city">${t('City')}</label><select id="co-city" class="field${e.city ? ' err' : ''}" data-bind="co.form.city" data-rerender="1">
         <option value="">${t('Choose city')}</option>${deliveries().map(d => `<option value="${esc(d.city)}"${f.city === d.city ? ' selected' : ''}>${esc(cityName(d.city))} — ${money(d.fee)}</option>`).join('')}</select></div>
       ${inp('region', t('Region / area'))}${inp('street', t('Street'))}${inp('building', t('Building'))}${inp('apartment', t('Apartment / floor'))}
+      ${S.user ? `<div class="full checks"><label><input type="checkbox" data-bind="co.saveAddr"${c.saveAddr !== false ? ' checked' : ''}> ${t('Save this address to my account')}</label></div>` : ''}
     </div>` : ''}
     <div class="frm" style="margin-top:14px"><div class="full"><label for="co-note">${t('Note (optional)')}</label><textarea id="co-note" class="field" style="min-height:80px" maxlength="1000" data-bind="co.form.note">${esc(f.note || '')}</textarea></div></div>
     ${Object.keys(e).length ? `<div class="form-err">${t('Please complete the highlighted fields.')}</div>` : ''}
@@ -725,6 +737,12 @@ function viewCheckout() {
       </div></aside>
     </section>`;
 }
+const addrLine = a => [a.apartment, a.building, a.street, a.region, cityName(a.city)].filter(Boolean).join(', ');
+function useAddress(a) {
+  const c = S.ui.co; c.addrId = a ? a.id : 'new';
+  if (a) Object.assign(c.form, { city: a.city, region: a.region, street: a.street, building: a.building, apartment: a.apartment || '' });
+}
+async function loadAddresses() { if (!S.user || isOwner()) { S.addresses = []; return; } try { S.addresses = await API.addresses(); } catch (e) { S.addresses = []; } }
 async function placeOrder() {
   const c = S.ui.co;
   for (const n of [1, 2]) {
@@ -743,9 +761,14 @@ async function placeOrder() {
   try {
     const res = await API.placeOrder(payload);
     track('order_placed', { path: '/checkout' });
+    // remember a new delivery address for next time
+    if (S.user && c.fulfil === 'delivery' && (c.addrId === 'new' || !S.addresses.length) && c.saveAddr !== false
+        && !S.addresses.some(a => a.city === f.city && a.street === f.street && a.building === f.building)) {
+      API.saveAddress({ city: f.city, region: f.region, street: f.street, building: f.building, apartment: f.apartment, label: '' }).then(loadAddresses, () => {});
+    }
     S.receipts = [res, ...S.receipts.filter(r => r.order_no !== res.order_no)].slice(0, 10);
     S.cart = []; S.promo = null; S.ui.promoMsg = null;
-    S.ui.co = { step: 1, form: {}, fulfil: 'delivery', pay: '', errors: {}, msg: '', busy: false };
+    S.ui.co = { step: 1, form: {}, fulfil: 'delivery', pay: '', errors: {}, msg: '', busy: false, addrId: null, saveAddr: true };
     save('receipts', 'cart', 'promo'); updateBadges();
     if (S.user) { S.ui.open[res.order_no] = true; loadOrders(); }
     location.hash = '#/order/' + res.order_no;
@@ -876,11 +899,28 @@ function viewAccount(tab) {
   const ongoing = S.orders.filter(o => o.status === 'pending' || o.status === 'shipped');
   const prev = S.orders.filter(o => !['pending', 'shipped'].includes(o.status));
   const p = S.ui.profile || (S.ui.profile = { name: u.name, phone: u.phone });
-  const body = tb === 'orders' ? `
+  const af = S.ui.addrForm;
+  const addrBody = `<div class="addr-list">${S.addresses.map(a => `<div class="addr-card"><div class="nm">${esc(a.label || t('Saved address'))}${a.is_default ? ` <span class="addr-badge">${t('DEFAULT')}</span>` : ''}</div>
+      <div class="ln" dir="auto">${esc(addrLine(a))}</div>
+      <div class="acts"><button class="link-btn" data-act="addrEdit" data-id="${a.id}">${t('EDIT')}</button>${a.is_default ? '' : `<button class="link-btn" data-act="addrDefault" data-id="${a.id}">${t('MAKE DEFAULT')}</button>`}<button class="link-btn" data-act="addrDelete" data-id="${a.id}">${t('DELETE')}</button></div></div>`).join('')}
+      ${!S.addresses.length && !af ? `<div class="muted" style="font-size:14px;padding:6px 0 10px">${t('No saved addresses yet. Addresses you use at checkout are saved here.')}</div>` : ''}</div>
+    ${af ? `<form class="summary" style="margin-top:18px" data-form="address"><div class="frm">
+        <div class="full"><label for="ad-label">${t('Name this address (e.g. Home, Work)')}</label><input id="ad-label" class="field" data-bind="addrForm.label" value="${esc(af.label || '')}" maxlength="40"></div>
+        <div><label for="ad-city">${t('City')}</label><select id="ad-city" class="field" data-bind="addrForm.city"><option value="">${t('Choose city')}</option>${deliveries().map(d => `<option value="${esc(d.city)}"${af.city === d.city ? ' selected' : ''}>${esc(cityName(d.city))}</option>`).join('')}</select></div>
+        <div><label for="ad-region">${t('Region / area')}</label><input id="ad-region" class="field" data-bind="addrForm.region" value="${esc(af.region || '')}"></div>
+        <div><label for="ad-street">${t('Street')}</label><input id="ad-street" class="field" data-bind="addrForm.street" value="${esc(af.street || '')}"></div>
+        <div><label for="ad-building">${t('Building')}</label><input id="ad-building" class="field" data-bind="addrForm.building" value="${esc(af.building || '')}"></div>
+        <div><label for="ad-apt">${t('Apartment / floor')}</label><input id="ad-apt" class="field" data-bind="addrForm.apartment" value="${esc(af.apartment || '')}"></div>
+        <div class="full checks"><label><input type="checkbox" data-bind="addrForm.is_default"${af.is_default ? ' checked' : ''}> ${t('Use as my default address')}</label></div></div>
+        ${S.ui.addrMsg ? `<div class="form-err">${esc(S.ui.addrMsg)}</div>` : ''}
+        <div style="display:flex;gap:12px;margin-top:18px;flex-wrap:wrap"><button class="btn btn-gold" type="submit">${t('SAVE ADDRESS')}</button><button class="btn btn-line" type="button" data-act="addrCancel">${t('CANCEL')}</button></div></form>`
+      : S.addresses.length < 10 ? `<button class="btn btn-line" style="margin-top:18px" data-act="addrNew">+ ${t('ADD AN ADDRESS')}</button>` : ''}`;
+  const body = tb === 'addresses' ? addrBody : tb === 'orders' ? `
       <div class="grp-h">${t('ONGOING ORDERS')} <span>${ongoing.length}</span></div>
       ${ongoing.length ? ongoing.map(o => orderCard(o, true)).join('') : `<div class="muted" style="font-size:14px;padding:10px 0 20px">${t('No ongoing orders.')} <button class="link-btn" data-act="go" data-href="#/shop/all">${t('START SHOPPING')}</button></div>`}
       <div class="grp-h"><button data-act="prevToggle">${t('PREVIOUS ORDERS')} <span style="color:var(--gold)">${S.ui.prevOpen ? '▲' : '▼'}</span></button><span>${prev.length}</span></div>
-      ${S.ui.prevOpen ? (prev.length ? prev.map(o => orderCard(o, false)).join('') : `<div class="muted" style="font-size:14px">${t('No previous orders yet.')}</div>`) : ''}`
+      ${S.ui.prevOpen ? (prev.length ? prev.map(o => orderCard(o, false)).join('') : `<div class="muted" style="font-size:14px">${t('No previous orders yet.')}</div>`) : ''}
+      <p class="muted" style="font-size:12px;line-height:1.7;margin-top:22px">${t('Ordered before as a guest? Orders placed with this account’s phone number and email are added here automatically.')}</p>`
     : `<form class="summary" style="margin-top:0" data-form="profile"><div class="frm">
         <div class="full"><label for="pf-name">${t('Name')}</label><input id="pf-name" class="field" data-bind="profile.name" value="${esc(p.name)}"></div>
         <div><label for="pf-phone">${t('Phone')}</label><input id="pf-phone" class="field" type="tel" data-bind="profile.phone" value="${esc(p.phone)}"></div>
@@ -897,7 +937,7 @@ function viewAccount(tab) {
       <div><div class="eyebrow" style="color:#e6cd97">${t('MY ACCOUNT')}</div><h1>${esc(u.name || t('Welcome'))}</h1><p>${esc(u.email)}${u.phone ? ' · ' + esc(u.phone) : ''}</p></div>
     </div></section>
     <section class="narrow" style="padding-top:36px">
-      <div class="tabs"><button class="${tb === 'profile' ? 'on' : ''}" data-act="go" data-href="#/account">${t('EDIT PROFILE')}</button><button class="${tb === 'orders' ? 'on' : ''}" data-act="go" data-href="#/orders">${t('MY ORDERS')}</button></div>
+      <div class="tabs"><button class="${tb === 'profile' ? 'on' : ''}" data-act="go" data-href="#/account">${t('EDIT PROFILE')}</button><button class="${tb === 'orders' ? 'on' : ''}" data-act="go" data-href="#/orders">${t('MY ORDERS')}</button><button class="${tb === 'addresses' ? 'on' : ''}" data-act="go" data-href="#/addresses">${t('ADDRESSES')}</button></div>
       ${body}
     </section>`;
 }
@@ -985,6 +1025,7 @@ function route() {
     case 'track': return viewTrack(b);
     case 'account': return viewAccount('profile');
     case 'orders': return viewAccount('orders');
+    case 'addresses': return viewAccount('addresses');
     case 'reset': return viewReset();
     case 'page': return viewPage(b);
     default: return viewNotFound();
@@ -1046,11 +1087,12 @@ async function onSession(session) {
     if (isOwner() && !PREVIEW) { toDashboard(); return; }
     if (!isOwner()) {
       try { const n = await API.linkMyOrders(); if (n > 0) toast(n1(n, 'We found {n} earlier order and added it to your account.', 'We found {n} earlier orders and added them to your account.')); } catch (e) { /* older database: skip */ }
+      await loadAddresses();
       await loadOrders();
     }
     if (!orderChannel) orderChannel = API.subscribeOrders('my-orders', () => loadOrders());
   } else {
-    S.user = null; S.orders = []; S.ui.profile = null;
+    S.user = null; S.orders = []; S.addresses = []; S.ui.profile = null; S.ui.co.addrId = null;
     if (orderChannel) { API.sb.removeChannel(orderChannel); orderChannel = null; }
   }
   setTracking(!isOwner());
@@ -1110,6 +1152,14 @@ const ACTIONS = {
   // checkout
   coStep: el => { const n = +el.dataset.n; if (n < S.ui.co.step) { S.ui.co.step = n; S.ui.co.errors = {}; render(); } },
   coFulfil: el => { S.ui.co.fulfil = el.dataset.v; render(); },
+  coAddr: el => { if (el.dataset.id === 'new') { S.ui.co.addrId = 'new'; ['city', 'region', 'street', 'building', 'apartment'].forEach(k => { S.ui.co.form[k] = ''; }); }
+    else useAddress(S.addresses.find(a => a.id === +el.dataset.id)); S.ui.co.errors = {}; render(); },
+  // saved addresses (account page)
+  addrNew: () => { S.ui.addrForm = { is_default: !S.addresses.length }; S.ui.addrMsg = ''; render(); },
+  addrEdit: el => { S.ui.addrForm = { ...S.addresses.find(a => a.id === +el.dataset.id) }; S.ui.addrMsg = ''; render(); },
+  addrCancel: () => { S.ui.addrForm = null; render(); },
+  addrDefault: async el => { try { await API.saveAddress({ ...S.addresses.find(a => a.id === +el.dataset.id), is_default: true }); await loadAddresses(); render(); } catch (e) { toast(API.errMessage(e)); } },
+  addrDelete: async el => { try { await API.deleteAddress(+el.dataset.id); await loadAddresses(); if (S.ui.co.addrId === +el.dataset.id) S.ui.co.addrId = null; toast(t('Address deleted')); render(); } catch (e) { toast(API.errMessage(e)); } },
   coPay: el => { S.ui.co.pay = el.dataset.v; S.ui.co.errors = {}; render(); },
   coNext: el => {
     const n = +el.dataset.n, e = coErrors(n); S.ui.co.errors = e;
@@ -1170,6 +1220,7 @@ const FORMS = {
       if (!(f.name || '').trim()) { a.msg = t('Please enter your name.'); return render(); }
       if (!PHONE_RE.test((f.phone || '').replace(/\s/g, ''))) { a.msg = t('Please enter a valid Egyptian mobile number (01xxxxxxxxx).'); return render(); }
       if (pw.length < 6) { a.msg = t('Your password needs at least 6 characters.'); return render(); }
+      try { if (!(await API.phoneAvailable(f.phone))) { a.msg = t('This phone number already belongs to another account. Sign in to that account, or use a different number.'); return render(); } } catch (e) { /* the database checks again */ }
     }
     if (a.mode === 'signin' && !pw) { a.msg = t('Please enter your password.'); return render(); }
     a.busy = true; render();
@@ -1188,6 +1239,12 @@ const FORMS = {
     if ((r.pw || '').length < 6) { r.msg = t('Your password needs at least 6 characters.'); return render(); }
     try { await API.auth.updatePassword(r.pw); S.ui.reset = { pw: '', msg: '', ok: '' }; toast(t('Password updated')); location.hash = '#/account'; }
     catch (e) { r.msg = API.errMessage(e); render(); }
+  },
+  address: async () => {
+    const a = S.ui.addrForm;
+    if (!a.city || !(a.region || '').trim() || !(a.street || '').trim() || !(a.building || '').trim()) { S.ui.addrMsg = t('Please fill in the city, area, street and building.'); return render(); }
+    try { await API.saveAddress(a); S.ui.addrForm = null; await loadAddresses(); toast(t('Address saved')); render(); }
+    catch (e) { S.ui.addrMsg = API.errMessage(e); render(); }
   },
   profile: async () => {
     const p = S.ui.profile;
@@ -1229,7 +1286,7 @@ document.addEventListener('input', e => {
     return;
   }
   if (el.dataset.bind) {
-    setPath(S.ui, el.dataset.bind, el.value);
+    setPath(S.ui, el.dataset.bind, el.type === 'checkbox' ? el.checked : el.value);
     if (el.dataset.rerender) render();
   }
   if (el.dataset.draft) {

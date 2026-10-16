@@ -87,7 +87,8 @@ class H(BaseHTTPRequestHandler):
             if user_row(email): return self.send(422, {'code': 422, 'error_code': 'user_already_exists', 'msg': 'User already registered'})
             if len(b.get('password', '')) < 6: return self.send(422, {'code': 422, 'error_code': 'weak_password', 'msg': 'Password should be at least 6 characters.'})
             uid = str(uuid.uuid4())
-            sql(f"insert into auth.users (id, email, raw_user_meta_data) values ({q(uid)}, {q(email)}, {q(json.dumps(b.get('data') or {}))}::jsonb)")
+            try: sql(f"insert into auth.users (id, email, raw_user_meta_data) values ({q(uid)}, {q(email)}, {q(json.dumps(b.get('data') or {}))}::jsonb)")
+            except subprocess.CalledProcessError: return self.send(500, {'code': 500, 'error_code': 'unexpected_failure', 'msg': 'Database error saving new user'})   # what Supabase says when a trigger refuses
             PASSWORDS[email] = b['password']; return self.send(200, session(user_row(email)))
         if p == '/token':
             gt = qs.get('grant_type', [''])[0]
@@ -115,7 +116,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, open(f, 'rb').read(), 'image/jpeg') if os.path.exists(f) else self.send(404, {'message': 'not found'})
         if p.startswith('/object/') and m == 'POST':
             c = self.claims()
-            if not (c and c.get('sub') and sql(f"select role from public.profiles where id = {q(c['sub'])}") == 'admin'):
+            if not (c and c.get('sub') and sql(f"select role from public.profiles where id = {q(c['sub'])}") in ('owner', 'admin')):
                 return self.send(403, {'statusCode': '403', 'error': 'Unauthorized', 'message': 'new row violates row-level security policy'})
             rel = p[len('/object/'):]; f = os.path.join(STORE_DIR, rel); os.makedirs(os.path.dirname(f), exist_ok=True)
             data, ct = self.body(), self.headers.get('Content-Type', '')

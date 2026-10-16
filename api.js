@@ -55,6 +55,12 @@ function errMessage(e) {
   if (code === 'EMPTY_CART') return t('Your cart is empty.');
   if (code === 'RATE_LIMIT') return t('Too many orders from this number in a short time. Please wait a few minutes or contact us on WhatsApp.');
   if (code === 'FORBIDDEN') return t('You don’t have permission to do that.');
+  if (code === 'PHONE_TAKEN' || /Database error saving new user/i.test(m)) return t('This phone number already belongs to another account. Sign in to that account, or use a different number.');
+  if (code === 'TOO_MANY_ADDRESSES') return t('You can save up to 10 addresses.');
+  if (code === 'CATEGORY_IN_USE') return t('“{name}” still has products. Choose where to move them before removing it.', { name: a });
+  if (code === 'INVALID' && a === 'category_names') return t('Every category needs a different name.');
+  if (code === 'INVALID' && a === 'subcategory_names') return t('Subcategories in the same category need different names.');
+  if (code === 'NO_TELEGRAM_BOT') return t('The Telegram bot isn’t set up yet — the main owner adds it once (see the steps below).');
   if (code === 'BLOCKED') return t('We can’t accept online orders from this account or number. Please contact us on WhatsApp.');
   if (/Invalid login credentials/i.test(m)) return t('Wrong email or password.');
   if (/Email not confirmed/i.test(m)) return t('Please confirm your email first — check your inbox for our link.');
@@ -97,6 +103,20 @@ const API = {
   async updateProfile(id, { name, phone }) {
     return unwrap(await sb.from('profiles').update({ name, phone }).eq('id', id).select().single());
   },
+  async phoneAvailable(phone) { return unwrap(await sb.rpc('phone_available', { p_phone: phone })); },
+
+  // ── saved addresses (own; staff with permission can pass a customer's id) ──
+  async addresses(userId) {
+    let q = sb.from('addresses').select('*').order('is_default', { ascending: false }).order('created_at');
+    if (userId) q = q.eq('user_id', userId);
+    return unwrap(await q);
+  },
+  async saveAddress(a) {
+    const row = { label: a.label || '', city: a.city, region: a.region, street: a.street, building: a.building, apartment: a.apartment || '', is_default: !!a.is_default };
+    if (a.user_id) row.user_id = a.user_id;
+    return unwrap(a.id ? await sb.from('addresses').update(row).eq('id', a.id).select().single() : await sb.from('addresses').insert(row).select().single());
+  },
+  async deleteAddress(id) { return unwrap(await sb.from('addresses').delete().eq('id', id)); },
 
   // ── orders ──
   async placeOrder(payload) { return unwrap(await sb.rpc('place_order', { payload })); },
@@ -162,6 +182,40 @@ const API = {
     async telegramStatus() { return unwrap(await sb.rpc('admin_telegram_status')); },
     async testTelegram() { return unwrap(await sb.rpc('admin_test_telegram')); },
     async httpResult(id) { return unwrap(await sb.rpc('admin_http_result', { p_id: id })); },
+    // Telegram: each staff member connects their own chat
+    async tgConnect() { return unwrap(await sb.rpc('admin_telegram_connect')); },
+    async tgBot(req) { return unwrap(await sb.rpc('admin_telegram_bot', { p_req: req })); },
+    async tgCheck(code, req) { return unwrap(await sb.rpc('admin_telegram_check', { p_code: code, p_req: req })); },
+    async tgRemove(chat) { return unwrap(await sb.rpc('admin_telegram_remove', { p_chat: chat })); },
+    // team (main owner)
+    async team() { return unwrap(await sb.rpc('admin_team')); },
+    async inviteStaff(email, name, perms) { return unwrap(await sb.rpc('admin_invite_staff', { p_email: email, p_name: name, p_perms: perms })); },
+    async updateStaff(id, p) { return unwrap(await sb.rpc('admin_update_staff', { p_id: id, p })); },
+    async removeStaff(id) { return unwrap(await sb.rpc('admin_remove_staff', { p_id: id })); },
+    async cancelInvite(email) { return unwrap(await sb.rpc('admin_cancel_invite', { p_email: email })); },
+    // creates the staff member's login without touching the owner's own session
+    async createLogin(email, password, name) {
+      const tmp = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'au-staff-signup' } });
+      const r = unwrap(await tmp.auth.signUp({ email, password, options: { data: { name }, emailRedirectTo: location.origin + location.pathname } }));
+      return { created: !!(r.user && (r.user.identities || []).length), confirm: !r.session };
+    },
+    // activity log
+    async activity({ entity, id, actor, from, to, limit = 200, before } = {}) {
+      let q = sb.from('activity').select('*').order('at', { ascending: false }).limit(limit);
+      if (entity) q = q.eq('entity', entity);
+      if (id) q = q.eq('entity_id', id);
+      if (actor) q = q.eq('actor', actor);
+      if (from) q = q.gte('at', from);
+      if (to) q = q.lte('at', to);
+      if (before) q = q.lt('at', before);
+      return unwrap(await q);
+    },
+    logEvent(action, label, details) { return sb.rpc('log_event', { p_action: action, p_label: label || '', p_details: details || {} }).then(() => {}, () => {}); },
+    // categories, guests, linking
+    async saveCategories(cats, moves) { return unwrap(await sb.rpc('admin_save_categories', { p_cats: cats, p_moves: moves })); },
+    async updateGuest(phone, p) { return unwrap(await sb.rpc('admin_update_guest', { p_phone: phone, p })); },
+    async linkOrders(userId, phone) { return unwrap(await sb.rpc('admin_link_orders', { p_user: userId, p_phone: phone })); },
   },
 };
 window.API = API;

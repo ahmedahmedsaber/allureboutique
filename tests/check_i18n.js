@@ -13,8 +13,20 @@ for (const f of ['app.js', 'admin.js', 'api.js', 'pages.js']) {
   for (const m of s.matchAll(new RegExp(`\\[\\s*'[a-z0-9_-]+',\\s*${lit}`, 'g'))) if (/[A-Z]/.test(m[1][0])) keys.add(m[1]);
   for (const line of s.split('\n')) if (/(LBL|labels|names|flagLbl|SORTS|COLLECTIONS|PAY|PAY_ST|PAY_STATUS|next = \{|PAYMENTS)\b/.test(line))
     for (const m of line.matchAll(new RegExp(`:\\s*${lit}`, 'g'))) if (/^[A-Z]/.test(m[1])) keys.add(m[1]);
+  // activity log / team maps: every label in these blocks is shown through t()
+  let inMap = false;
+  for (const line of s.split('\n')) {
+    if (/^const (SET_KEYS|FIELD_LBL|PERM_GROUPS|PERM_PRESETS|ACT_AREAS)\b/.test(line)) inMap = true;
+    if (inMap) {
+      for (const m of line.matchAll(new RegExp(`:\\s*${lit}`, 'g'))) keys.add(m[1]);
+      for (const m of line.matchAll(new RegExp(`\\[\\s*'[a-z0-9_.-]*',\\s*${lit}`, 'g'))) keys.add(m[1]);
+      for (const m of line.matchAll(new RegExp(`\\[\\s*${lit},\\s*\\[`, 'g'))) keys.add(m[1]);
+    }
+    if (inMap && /;\s*$/.test(line)) inMap = false;
+  }
+  for (const m of s.matchAll(new RegExp(`\\[\\d+,\\s*${lit}\\]`, 'g'))) keys.add(m[1]);
 }
 const skip = new Set(['Instagram', 'Facebook', 'TikTok', 'Google', 'WhatsApp', 'X / Twitter', 'Snapchat', 'Bing']);
-const miss = [...keys].filter(k => /[A-Za-z]/.test(k) && !(k in AR) && !skip.has(k)).sort();
+const miss = [...keys].filter(k => /[A-Za-z]/.test(k) && !/^[a-z]+\.[a-z]+$/.test(k) && !(k in AR) && !skip.has(k)).sort();
 console.log(miss.length ? miss.join('\n') : 'all translated');
 process.exitCode = miss.length ? 1 : 0;

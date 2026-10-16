@@ -112,18 +112,45 @@ Both go through **Resend** (resend.com). Its free plan covers 3,000 emails a mon
 
    Each email shows English on top and Arabic below, with the ALLURE logo and colours.
 
-## 4. Make yourself the owner
+## 4. Make yourself the main owner
 
 1. Open the shop, go to **My Account → Create account** and sign up with the email you'll use to manage the shop.
 2. In Supabase **SQL Editor**, run this with your email:
 
    ```sql
-   update public.profiles set role = 'admin' where email = 'you@example.com';
+   update public.profiles set role = 'owner' where email = 'you@example.com';
    ```
 
 3. Open **`admin.html`** and sign in with the same email and password.
 
-To add a partner or staff member, they create an account and you run the same line with their email. To remove their access, run it again with `'customer'` in place of `'admin'`.
+**Already set up before October 2026?** Run the latest `schema.sql`. Your existing owner account automatically becomes the **main owner**. If there were several owner accounts, the oldest one becomes the main owner and the others keep full access as team members.
+
+### Team members (partners and staff)
+
+The main owner adds people in the dashboard under **Team**. You don't need SQL for this.
+
+1. Fill in their name, email and a temporary password.
+2. Tick what they can do. Each permission is a separate tick, for example:
+   - see orders
+   - change the status
+   - edit orders
+   - give refunds
+   - delete orders
+   - see, edit or block customers
+   - edit products, categories, reviews, pages, discount codes or store settings
+   - see sales and insights
+   - export to Excel
+   - see everyone's activity
+
+   The **Order handling**, **Shop manager** and **Everything (no team)** buttons tick common sets at once.
+3. Press **Add to team**. They get an email to confirm their address, then sign in at `/admin.html`.
+   - They only see the pages they're allowed to use.
+   - The database also refuses anything else they try.
+   - They can change their password under **My account**.
+
+You can change someone's access at any time, **pause** it (they're signed out of everything until you resume it), or **remove** them from the team.
+
+**Activity log:** every change anyone makes is recorded on the **Activity** page: who did it, what changed (before → after) and when. This covers order statuses, edits, refunds, products, prices, settings, customers, blocking, discount codes, reviews, the team, sign-ins and exports. Each order and customer page also shows its own history.
 
 ## 5. Order notifications
 
@@ -131,26 +158,27 @@ To add a partner or staff member, they create an account and you run the same li
 
 This is free and works even when the dashboard is closed.
 
+**Once, by the main owner: create the bot**
 1. In Telegram, open **@BotFather**, send `/newbot`, and pick a name such as "ALLURE Orders". BotFather replies with a **token** like `123456789:AAH…`.
-2. Open your new bot and press **Start**.
-   - **For a whole team:** create a Telegram group, add the bot to it, and send any message in the group.
-3. In a browser, open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates`. Find `"chat":{"id":` and copy the number after it. That is your **chat ID**. Group IDs start with `-`.
-4. In Supabase **SQL Editor**, run this with your values:
+2. In Supabase **SQL Editor**, run this with your token:
 
    ```sql
    select vault.create_secret('123456789:AAH…', 'telegram_bot_token');
-   select vault.create_secret('-1001234567890', 'telegram_chat_id');
    ```
 
-5. In the dashboard, open **Notifications**, then press **Refresh status** and **Send test message**.
-6. Optional: in **Settings**, fill in **Dashboard link** (e.g. `https://allureboutique.com/admin.html`). Every Telegram alert will then include a link to it.
+   If it says the name already exists, the bot is already set up. Skip this step.
 
-To change the token or chat ID later, run:
+**Everyone, with one tap: connect your Telegram**
+1. In the dashboard, open **Notifications** and press **Connect my Telegram**.
+2. Press **Open Telegram**, then press **Start** in the bot. The dashboard confirms it within a few seconds.
+   - To send order messages to a **group**, press **Add to a group** instead and pick the group.
+3. Press **Send test message** to check.
 
-```sql
-select vault.update_secret((select id from vault.secrets where name = 'telegram_bot_token'), 'NEW_TOKEN');
-select vault.update_secret((select id from vault.secrets where name = 'telegram_chat_id'), 'NEW_CHAT_ID');
-```
+The **Notifications** page lists everyone who gets order messages. The main owner can disconnect any chat; a team member can disconnect their own. If someone is paused, removed, or loses the "see orders" permission, their chat stops getting messages automatically.
+
+If you set up a chat ID by hand before (`telegram_chat_id`), it keeps working as well.
+
+Optional: in **Settings**, fill in **Dashboard link** (e.g. `https://www.allure-boutique.org/admin.html`). Every Telegram alert will then include a link to it.
 
 ### Browser alerts: while the dashboard is open
 
@@ -167,7 +195,7 @@ The project includes everything Railway needs: a `Dockerfile` that serves the si
 5. In Supabase **Authentication → URL Configuration**, set **Site URL** to that address and add it to **Redirect URLs** (step 3).
 6. In the dashboard's **Settings**, set **Dashboard link** to `https://<your address>/admin.html` so Telegram alerts link to it.
 
-Every time new code is pushed to the `main` branch on GitHub, Railway redeploys the site automatically.
+Every time new code is pushed to the `main` branch on GitHub, Railway redeploys the site automatically. **When an update adds database features (like this one), run `supabase/schema.sql` again** in the SQL Editor. It keeps all your data.
 
 ## 7. Arabic
 
@@ -205,9 +233,20 @@ Customers see each status change on their **My Orders** page or the **Track an O
   | **Delete** | Removes a test or spam order for good | Optional | Removed |
 
   Every change is written to the order's **change log**.
+- **Order page:** each order opens on its own page, and its address works as a link (Ctrl/⌘-click opens it in a new tab).
+  - You can move an order to **any** status, including back from Received.
+    - Cancelling puts the pieces back in stock; bringing a cancelled order back takes them out again.
+    - Moving a returned order back cancels its refund amount.
 - **Customers:**
   - Lists every account and guest (by phone number) with their orders, total spent and last order date. A chart shows sign-ups, and you can see your top customers.
-  - Open a customer to edit their name or phone, or to **Block** them.
+  - Each customer opens on their own page with tabs:
+    - **Overview:** total spent, average order, spending by month, favourite categories, most bought pieces, how they order.
+    - **Orders.**
+    - **Addresses.**
+    - **Details & blocking:** edit their name, phone and a team-only note, or **Block** them. For guests, you can correct the name, email or phone on all their orders.
+    - **Activity.**
+  - **One account per phone number:** sign-up refuses a number that another account already uses (`010…`, `+20 10…` and `2010…` count as the same number). If two accounts shared a number before this update, both are marked **SHARED** in the list.
+  - **Guest orders join the account automatically** when the phone **and** the email match. This happens when the account is created, when the email is confirmed, and when a later guest order uses that phone and email. If the email differs, open the customer's **Details** tab and press **Add them to this account**.
   - A blocked account can't sign in to order and can't post reviews, and its phone number can't place orders, even as a guest. You can also block a phone number by itself.
 - **Pages:** edit the Returns & Exchange policy, Shipping, and Terms pages in English and Arabic, with a live preview.
 - **Export:** download an Excel file for any time range (to the minute). It has sheets for orders, order items, customers, products & sales, and reviews.
@@ -215,7 +254,12 @@ Customers see each status change on their **My Orders** page or the **Track an O
   - Product photos: **1200 × 1600 px** (portrait 3:4), at least 900 × 1200.
   - Each product can also have a **size chart** image. The shop shows a "Size chart" button on the product page.
 - **InstaPay:** in **Settings**, add your InstaPay number **and** your InstaPay payment link. Customers see a "Pay with InstaPay link" button on the confirmation page and in their email.
-- **Reviews on the home page:** the average star rating and the number of reviews are shown above the reviews. Turn this on or off in **Settings → Reviews on the home page**.
+- **Reviews on the home page:** show or hide the average star rating and the number of reviews separately, in **Settings → Reviews on the home page**.
+- **Categories:** the **Categories** page edits each category's English and Arabic name, order (↑ ↓), the tile picture (portrait 3:4, about 900 × 1200 px) or its two colours, and the label on the picture.
+  - Subcategories are separate rows with English and Arabic names, and each shows how many products it has.
+  - Renaming a category or subcategory moves its products with it.
+  - Before removing one that still has products, the page asks where to move them.
+- **Saved addresses:** customers with an account can save several delivery addresses (**My Account → Addresses**). At checkout they pick one with a tap. A new address used at checkout is saved automatically unless they untick it.
 - **Products:** add photos, prices, stock, sale prices and the choices customers make (color, letter, ring size, bag size, set pieces).
   - Each order lowers stock automatically.
   - At 0 the product shows "Out of stock".
