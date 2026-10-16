@@ -867,7 +867,7 @@ declare key text; s jsonb; sender text; rid bigint;
 begin
   select decrypted_secret into key from vault.decrypted_secrets where name = 'resend_api_key' limit 1;
   if key is null or coalesce(p_to, '') = '' then return null; end if;
-  select coalesce(data->'email', '{}'::jsonb) into s from public.settings where id = 1;
+  select coalesce(data->'mailer', '{}'::jsonb) into s from public.settings where id = 1;
   sender := coalesce(nullif(s->>'fromName', ''), 'ALLURE Boutique') || ' <' || coalesce(nullif(s->>'fromEmail', ''), 'onboarding@resend.dev') || '>';
   select net.http_post(
     url     := 'https://api.resend.com/emails',

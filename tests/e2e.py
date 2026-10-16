@@ -146,8 +146,14 @@ with sync_playwright() as p:
 
     # settings: reviews summary off
     nav(pg, 'SETTINGS'); pg.wait_for_selector('[data-set="reviews.showSummary"]')
-    pg.uncheck('[data-set="reviews.showSummary"]'); pg.click('form[data-form=settings] button[type=submit]'); pg.wait_for_timeout(800)
+    pg.uncheck('[data-set="reviews.showSummary"]')
+    pg.fill('[data-set="mailer.fromName"]', 'ALLURE Boutique'); pg.fill('[data-set="mailer.fromEmail"]', 'orders@allure-boutique.org')
+    pg.fill('[data-set="mailer.replyTo"]', 'owner@gmail.com'); pg.fill('[data-set="instapayLink"]', 'https://ipn.eg/S/allure/instapay/ui')
+    pg.click('form[data-form=settings] button[type=submit]'); pg.wait_for_timeout(800)
     ok(psql("select data->'reviews'->>'showSummary' from settings") == 'false', 'review summary switched off')
+    ok(psql("select data->'mailer'->>'fromEmail' from settings") == 'orders@allure-boutique.org'
+       and psql("select data->>'email' from settings") == 'hello@allureboutique.com'
+       and psql("select data->>'instapayLink' from settings").endswith('/ui'), 'email sender saved, shop contact email kept')
 
     # export
     nav(pg, 'EXPORT'); pg.wait_for_selector('[data-act=doExport]'); pg.click('[data-act=exPreset][data-k=all]')

@@ -557,8 +557,8 @@ function viewSettings() {
           <div class="full">${inp('siteUrl', t('Shop address (used in emails)'), 'https://www.allure-boutique.org', 'text', 'ltr')}</div>
           <div class="full">${inp('dashboardUrl', t('Dashboard link (added to Telegram alerts)'), 'https://yourshop.com/admin.html', 'text', 'ltr')}</div></div></div>
       <div class="adm-card"><h3>${t('EMAILS TO CUSTOMERS')}</h3><p class="note">${t('Order confirmations are sent from this name and address. Replies go to the reply-to address.')}</p>
-        <div class="frm">${inp('email.fromName', t('Sender name'), 'ALLURE Boutique')}${inp('email.fromEmail', t('Sender address'), 'orders@allure-boutique.org', 'email')}
-          <div class="full">${inp('email.replyTo', t('Replies go to'), 'you@gmail.com', 'email')}</div></div>
+        <div class="frm">${inp('mailer.fromName', t('Sender name'), 'ALLURE Boutique')}${inp('mailer.fromEmail', t('Sender address'), 'orders@allure-boutique.org', 'email')}
+          <div class="full">${inp('mailer.replyTo', t('Replies go to'), 'you@gmail.com', 'email')}</div></div>
         <p class="hint" style="margin-top:10px">${t('Setup and test: see Notifications.')}</p></div>
       <div class="adm-card"><h3>${t('REVIEWS ON THE HOME PAGE')}</h3>
         <div class="checks" style="margin-top:12px"><label><input type="checkbox" data-set="reviews.showSummary"${(s.reviews || {}).showSummary !== false ? ' checked' : ''}> ${t('Show the average rating and number of reviews')}</label></div>
@@ -1048,7 +1048,7 @@ async function cropAndUpload(fileOrUrl, opts, folder) {
 
 // ───────────────────────── email setup (notifications page) ─────────────────────────
 function emailCard() {
-  const es = A.ui.es, em = A.settings.email || {};
+  const es = A.ui.es, em = A.settings.mailer || {};
   return `<div class="adm-card"><h3>${t('EMAIL — ORDER CONFIRMATIONS')}</h3><p class="note">${t('Every customer gets an email with their order number, items, total and payment steps. Sent with Resend (free).')}</p>
     <div class="kv" style="margin:6px 0 16px"><span class="k">${t('RESEND KEY')}</span><span>${es ? (es.key ? `<span class="ok">✓ ${t('Saved')}</span>` : `<span class="bad">${t('Not set')}</span>`) : '…'}</span>
       <span class="k">${t('SENDER')}</span><span>${esc((em.fromName || 'ALLURE Boutique') + ' <' + (em.fromEmail || 'onboarding@resend.dev') + '>')}</span></div>

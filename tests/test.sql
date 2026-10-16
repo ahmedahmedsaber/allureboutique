@@ -134,7 +134,7 @@ select pg_temp.ok((select count(*) from blocked_phones) = 1 and not (select bloc
 
 -- ═══ telegram + order email ═══
 insert into vault.secrets (name, secret) values ('telegram_bot_token', '123:ABC'), ('telegram_chat_id', '-100777'), ('resend_api_key', 're_test_key');
-update settings set data = data || '{"email":{"fromName":"ALLURE Boutique","fromEmail":"orders@allure-boutique.org","replyTo":"owner@gmail.com"},"instapayLink":"https://ipn.eg/S/allure/instapay/abc","siteUrl":"https://www.allure-boutique.org"}';
+update settings set data = data || '{"mailer":{"fromName":"ALLURE Boutique","fromEmail":"orders@allure-boutique.org","replyTo":"owner@gmail.com"},"instapayLink":"https://ipn.eg/S/allure/instapay/abc","siteUrl":"https://www.allure-boutique.org"}';
 delete from net.calls;
 set role anon;
 select place_order('{"customer":{"name":"Tele <Gram>","email":"buyer@example.com","phone":"01055500009"},"fulfil":"delivery","city":"Cairo","lang":"ar",
@@ -145,6 +145,8 @@ select pg_temp.ok((select count(*) from net.calls where url like 'https://api.te
 select pg_temp.ok((select count(*) from net.calls where url = 'https://api.resend.com/emails') = 1, 'one confirmation email per order');
 select pg_temp.ok((select body->'to'->>0 from net.calls where url like '%resend%') = 'buyer@example.com', 'email goes to the customer');
 select pg_temp.ok((select body->>'from' from net.calls where url like '%resend%') = 'ALLURE Boutique <orders@allure-boutique.org>', 'email is from ALLURE Boutique');
+select pg_temp.ok((select data->>'email' from settings) like '%@%', 'shop contact email kept next to the sender settings');
+select pg_temp.ok((select body->>'reply_to' from net.calls where url like '%resend%') = 'owner@gmail.com', 'replies go to the owner');
 select pg_temp.ok((select headers->>'Authorization' from net.calls where url like '%resend%') = 'Bearer re_test_key', 'email uses the Vault key');
 select pg_temp.ok((select body->>'subject' from net.calls where url like '%resend%') like '%' || (:'t_r'::jsonb->>'order_no') || '%', 'subject has the order number');
 select pg_temp.ok((select body->>'html' from net.calls where url like '%resend%') like '%dir="rtl"%', 'Arabic order gets an Arabic email');
