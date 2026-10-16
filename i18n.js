@@ -24,6 +24,8 @@ const I18N = {
   set(l) { lang = l === 'ar' ? 'ar' : 'en'; try { localStorage.setItem(storeKey, JSON.stringify(lang)); } catch (e) {} apply(); },
   get lang() { return lang; },
   isAr: () => lang === 'ar',
+  /* translate into a given language, whatever the page is showing (used for default page texts) */
+  tr(l, s, v) { let r = l === 'ar' && AR[s] != null ? AR[s] : s; if (v) r = r.replace(/\{(\w+)\}/g, (m, k) => (v[k] != null ? v[k] : m)); return r; },
   locale: () => (lang === 'ar' ? 'ar-EG-u-nu-latn' : 'en-GB'),
   /* the Arabic version of owner-entered text when it exists, otherwise the English */
   pick: (en, ar) => (lang === 'ar' && ar && String(ar).trim() ? ar : en),

@@ -572,3 +572,23 @@ html[dir="rtl"] .summary .row b,html[dir="rtl"] .price,html[dir="rtl"] .num{unic
   .lang{padding:4px 2px;font-size:12px;}
   .logo img{height:32px;}
 }
+
+/* ── WhatsApp button, size chart, order screenshot note, review summary ── */
+.wa-float{position:fixed;left:20px;bottom:20px;width:56px;height:56px;border-radius:100px;background:#25d366;color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 24px rgba(0,0,0,.22);z-index:55;transition:transform .2s;}
+.wa-float:hover{transform:scale(1.06);}
+.wa-float .icon{width:28px;height:28px;}
+.wa-float[hidden]{display:none;}
+.lightbox{position:fixed;inset:0;background:rgba(8,6,4,.6);z-index:90;display:flex;align-items:center;justify-content:center;padding:20px;}
+.lightbox[hidden]{display:none;}
+.lb-box{background:var(--bg2);max-width:min(900px,100%);max-height:100%;overflow:auto;border:1px solid var(--line);}
+.lb-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px 10px 18px;border-bottom:1px solid var(--line);font-size:13px;}
+.lb-box img{display:block;max-width:100%;height:auto;margin:0 auto;}
+.size-btn{margin-top:4px;}
+.shot-note{display:flex;gap:14px;align-items:flex-start;text-align:start;border:1px dashed var(--gold);background:var(--bg2);padding:18px 20px;margin-top:26px;font-size:14px;line-height:1.7;}
+.shot-note .shot-ico{font-size:26px;line-height:1;}
+.shot-note .ord-no{color:var(--gold);font-size:16px;direction:ltr;unicode-bidi:isolate;}
+.notice-btns{display:flex;gap:10px;flex-wrap:wrap;}
+.rev-summary{display:flex;align-items:center;gap:12px;margin:-14px 0 26px;flex-wrap:wrap;}
+.rev-summary .avg{font-family:var(--serif);font-size:34px;color:var(--gold);font-variant-numeric:lining-nums;}
+.rev-summary .st{color:var(--gold);letter-spacing:2px;}
+@media(max-width:768px){ .wa-float{left:14px;bottom:14px;width:52px;height:52px;} }

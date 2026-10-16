@@ -23,6 +23,7 @@ const fromRow = r => ({
   addedAt: r.created_at, images: r.images || [], bg: r.bg, options: r.options || {}, active: r.active,
   nameAr: r.name_ar || '', descAr: r.description_ar || '', materialAr: r.material_ar || '',
   sizeAr: r.size_ar || '', colorAr: r.color_ar || '', comesWithAr: r.comes_with_ar || [],
+  sizeChart: r.size_chart || '',
 });
 const toRow = p => ({
   id: p.id, code: p.code, name: p.name, cat: p.cat, sub: p.sub || null,
@@ -33,6 +34,7 @@ const toRow = p => ({
   images: p.images || [], bg: p.bg, options: p.options || {}, active: p.active !== false,
   name_ar: p.nameAr || '', description_ar: p.descAr || '', material_ar: p.materialAr || '',
   size_ar: p.sizeAr || '', color_ar: p.colorAr || '', comes_with_ar: p.comesWithAr || [],
+  size_chart: p.sizeChart || '',
 });
 
 // friendly messages for errors raised by place_order() and Supabase Auth (translated by i18n.js)
@@ -53,6 +55,7 @@ function errMessage(e) {
   if (code === 'EMPTY_CART') return t('Your cart is empty.');
   if (code === 'RATE_LIMIT') return t('Too many orders from this number in a short time. Please wait a few minutes or contact us on WhatsApp.');
   if (code === 'FORBIDDEN') return t('You don’t have permission to do that.');
+  if (code === 'BLOCKED') return t('We can’t accept online orders from this account or number. Please contact us on WhatsApp.');
   if (/Invalid login credentials/i.test(m)) return t('Wrong email or password.');
   if (/Email not confirmed/i.test(m)) return t('Please confirm your email first — check your inbox for our link.');
   if (/already registered/i.test(m)) return t('An account with this email already exists. Try signing in.');
@@ -100,6 +103,8 @@ const API = {
   async myOrders() { return unwrap(await sb.from('orders').select('*').order('created_at', { ascending: false })); },
   async trackOrder(orderNo, phone) { return unwrap(await sb.rpc('track_order', { p_order_no: orderNo, p_phone: phone })); },
   async checkPromo(code) { return unwrap(await sb.rpc('check_promo', { p_code: code })); },
+  async linkMyOrders() { return unwrap(await sb.rpc('link_my_orders')); },
+  async reviewSummary() { return unwrap(await sb.rpc('review_summary')); },
   subscribeOrders(name, cb) {
     return sb.channel(name).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, cb).subscribe();
   },
@@ -145,6 +150,14 @@ const API = {
     async promos() { return unwrap(await sb.from('promo_codes').select('*').order('created_at', { ascending: false })); },
     async savePromo(p) { return unwrap(await sb.from('promo_codes').upsert(p)); },
     async deletePromo(code) { return unwrap(await sb.from('promo_codes').delete().eq('code', code)); },
+    async editOrder(id, p) { return unwrap(await sb.rpc('admin_edit_order', { p_id: id, p })); },
+    async refundOrder(id, amount, restock, note) { return unwrap(await sb.rpc('admin_refund_order', { p_id: id, p_amount: amount, p_restock: restock, p_note: note || '' })); },
+    async deleteOrder(id, restock) { return unwrap(await sb.rpc('admin_delete_order', { p_id: id, p_restock: restock })); },
+    async customers() { return unwrap(await sb.rpc('admin_customers')); },
+    async updateCustomer(id, p) { return unwrap(await sb.rpc('admin_update_customer', { p_id: id, p })); },
+    async blockPhone(phone, blocked, reason) { return unwrap(await sb.rpc('admin_block_phone', { p_phone: phone, p_blocked: blocked, p_reason: reason || '' })); },
+    async emailStatus() { return unwrap(await sb.rpc('admin_email_status')); },
+    async testEmail(to) { return unwrap(await sb.rpc('admin_test_email', { p_to: to })); },
     async insights(days) { return unwrap(await sb.rpc('admin_insights', { p_days: days })); },
     async telegramStatus() { return unwrap(await sb.rpc('admin_telegram_status')); },
     async testTelegram() { return unwrap(await sb.rpc('admin_test_telegram')); },

@@ -43,16 +43,74 @@ You can run `schema.sql` again later, for example after an update. It keeps all 
 
 **Already set up before the Arabic version?** Run the latest `schema.sql` (it adds the Arabic fields), then run `supabase/arabic.sql`. That fills in the Arabic names and descriptions for the starter products, categories, banner and cities. It only fills fields that are still empty, so anything you've edited stays as it is, and it's safe to run twice.
 
-## 3. Customer logins and email
+## 3. Customer logins
 
-1. In **Authentication → URL Configuration**, set **Site URL** to your shop's address, e.g. `https://allureboutique.com`. While testing on your computer, use `http://localhost:8000`.
-2. Add the same address to **Redirect URLs**.
-3. In **Authentication → Sign In / Providers → Email**, choose how sign-up works:
+1. In **Authentication → URL Configuration**:
+   - **Site URL:** `https://www.allure-boutique.org`
+   - **Redirect URLs:** add both `https://www.allure-boutique.org/**` and `https://allure-boutique.org/**`
+
+   **This fixes "localhost" in confirmation emails.** When the shop's address isn't on the Redirect URLs list, Supabase falls back to the Site URL. If that is still `http://localhost:3000`, every link in the email points to localhost.
+2. In **Authentication → Sign In / Providers → Email**, choose how sign-up works:
    - **Confirm email ON** (recommended): customers click a link in an email before they can sign in.
    - **Confirm email OFF**: customers are signed in straight away.
-4. **Before you launch**, set up your own email sender under **Authentication → Emails → SMTP Settings**. Supabase's built-in sender is for testing only and sends just a few emails per hour. Without it, sign-up and password-reset emails will stop arriving once the shop gets busy. Any SMTP service works, for example Resend, Brevo, Zoho Mail, or Google Workspace.
 
 Guests can always check out without an account. They track their order with the order number and their phone number on the **Track an Order** page.
+
+**Earlier guest orders join the account automatically.** When a customer creates an account, the shop finds their earlier guest orders and adds them to **My Orders**. The phone number **and** the email must both match, and the email must be confirmed, so nobody can claim someone else's orders with just a phone number.
+
+## 3b. Emails from "ALLURE Boutique" (Resend, free)
+
+Two kinds of email go to customers:
+- **Account emails** (confirm sign-up, reset password) are sent by Supabase.
+- **Order confirmations** (order number, items, total, InstaPay details, tracking link) are sent by the database the moment an order is placed, in the language the customer was using.
+
+Both go through **Resend** (resend.com). Its free plan covers 3,000 emails a month and 100 a day. You don't need a mailbox at allure-boutique.org: emails are *sent from* `orders@allure-boutique.org`, and when a customer presses Reply, the reply goes to your Gmail.
+
+**A. Verify your domain in Resend (about 10 minutes, once)**
+1. Sign up at **resend.com**, open **Domains → Add domain**, type `allure-boutique.org`, and choose region **Ireland (eu-west-1)**.
+2. Resend shows 3 DNS records: an MX record and a TXT record on `send`, and a TXT record on `resend._domainkey`. In **GoDaddy → My Products → allure-boutique.org → DNS → Add New Record**, add each one exactly as shown. In GoDaddy's **Name** box, leave out `.allure-boutique.org`, so type only `send` or `resend._domainkey`.
+3. Back in Resend, press **Verify**. It usually turns green within 5–30 minutes.
+
+**B. Order confirmation emails**
+1. In Resend, open **API Keys → Create API key** (permission: *Sending access*) and copy the key (`re_…`).
+2. In Supabase **SQL Editor**, run:
+
+   ```sql
+   select vault.create_secret('re_YOUR_KEY', 'resend_api_key');
+   ```
+
+   To change it later: `select vault.update_secret((select id from vault.secrets where name = 'resend_api_key'), 're_NEW_KEY');`
+3. In the dashboard **Settings → Emails to customers**, set:
+   - **Sender name:** `ALLURE Boutique`
+   - **Sender address:** `orders@allure-boutique.org`
+   - **Replies go to:** your Gmail address
+
+   Also set **Shop address (used in emails)**, in **Payment & contact**, to `https://www.allure-boutique.org` (it's used for the logo and the "Track your order" button), then **Save**.
+4. In **Notifications → Email — order confirmations**, check that the Resend key shows **Saved**, then send a test email to yourself.
+
+**C. Account emails with your name and design**
+1. In Supabase **Authentication → Emails → SMTP Settings**, turn on **Custom SMTP** and fill in:
+
+   | Field | Value |
+   |---|---|
+   | Sender email | `noreply@allure-boutique.org` |
+   | Sender name | `ALLURE Boutique` |
+   | Host | `smtp.resend.com` |
+   | Port | `465` |
+   | Username | `resend` |
+   | Password | your Resend API key (`re_…`) |
+
+   From now on, emails come from "ALLURE Boutique" and not from Supabase. Supabase's own rate limit is also lifted.
+2. In **Authentication → Emails → Templates**, replace each template with the files in the `emails/` folder. Open each file, copy all of it, and paste it into the **Source** box:
+
+   | Template | File | Subject |
+   |---|---|---|
+   | Confirm signup | `emails/confirm-signup.html` | `Confirm your ALLURE account · أكدي حسابك` |
+   | Reset password | `emails/reset-password.html` | `Reset your ALLURE password · إعادة تعيين كلمة المرور` |
+   | Change email address | `emails/change-email.html` | `Confirm your new email · أكدي بريدك الجديد` |
+   | Magic link | `emails/magic-link.html` | `Your ALLURE sign-in link · رابط الدخول` |
+
+   Each email shows English on top and Arabic below, with the ALLURE logo and colours.
 
 ## 4. Make yourself the owner
 
@@ -136,12 +194,33 @@ Every time new code is pushed to the `main` branch on GitHub, Railway redeploys 
 Customers see each status change on their **My Orders** page or the **Track an Order** page.
 
 **Other things you can do in the dashboard:**
-- **Cancel an order:** this puts the pieces back in stock automatically.
+- **Order actions:** open an order, then use **Manage order**.
+
+  | Action | What happens | Stock | Revenue |
+  |---|---|---|---|
+  | **Cancel** | The order didn't go ahead | Pieces go back | Not counted |
+  | **Edit order** | Change pieces, quantities, prices, options, customer details, delivery | Follows the change | Updated |
+  | **Exchange** | The customer swapped pieces; edit the items, and the order is marked *Exchanged* | Old pieces back, new pieces out | Updated |
+  | **Return / refund** | Money back, full or partial; tick "returned to stock" if the pieces came back | Optional | The refund is subtracted |
+  | **Delete** | Removes a test or spam order for good | Optional | Removed |
+
+  Every change is written to the order's **change log**.
+- **Customers:**
+  - Lists every account and guest (by phone number) with their orders, total spent and last order date. A chart shows sign-ups, and you can see your top customers.
+  - Open a customer to edit their name or phone, or to **Block** them.
+  - A blocked account can't sign in to order and can't post reviews, and its phone number can't place orders, even as a guest. You can also block a phone number by itself.
+- **Pages:** edit the Returns & Exchange policy, Shipping, and Terms pages in English and Arabic, with a live preview.
+- **Export:** download an Excel file for any time range (to the minute). It has sheets for orders, order items, customers, products & sales, and reviews.
+- **Photos:** every product photo and banner can be cropped before upload (✂ also re-crops an existing photo).
+  - Product photos: **1200 × 1600 px** (portrait 3:4), at least 900 × 1200.
+  - Each product can also have a **size chart** image. The shop shows a "Size chart" button on the product page.
+- **InstaPay:** in **Settings**, add your InstaPay number **and** your InstaPay payment link. Customers see a "Pay with InstaPay link" button on the confirmation page and in their email.
+- **Reviews on the home page:** the average star rating and the number of reviews are shown above the reviews. Turn this on or off in **Settings → Reviews on the home page**.
 - **Products:** add photos, prices, stock, sale prices and the choices customers make (color, letter, ring size, bag size, set pieces).
   - Each order lowers stock automatically.
   - At 0 the product shows "Out of stock".
 - **Reviews:** customer reviews appear on the home page only after you press **Approve**.
-- **Settings:** season banner (upload a background photo, recommended 2400 × 1100 px), delivery fees per city, discount codes, InstaPay and WhatsApp numbers, contact details.
+- **Settings:** season banner (upload a background photo, recommended 2400 × 1100 px, crop it before upload), delivery fees per city, discount codes, InstaPay and WhatsApp numbers, contact details.
 - **Insights:**
   - **Live now:** visitors online, active carts and people at checkout, updating instantly.
   - **History:** impressions (page views), unique visitors, a shopping funnel from visit to order, abandoned carts, traffic sources, devices, most visited pages, and product interest.

@@ -43,8 +43,9 @@ const A = {
   prefs: store.get('admin.prefs', { sound: true }),
 };
 
-const STATUS = ['pending', 'shipped', 'received', 'cancelled'];
-const STATUS_LBL = { cart: 'My Cart', pending: 'Pending', shipped: 'Shipped', received: 'Received', cancelled: 'Cancelled' };
+const STATUS = ['pending', 'shipped', 'received', 'exchanged', 'refunded', 'cancelled'];
+const STATUS_LBL = { cart: 'My Cart', pending: 'Pending', shipped: 'Shipped', received: 'Received', cancelled: 'Cancelled', refunded: 'Returned / refunded', exchanged: 'Exchanged' };
+const net = o => o.total - (o.refunded || 0);   // what the shop actually keeps
 const PAY = { cod: 'Cash on delivery', instapay: 'InstaPay / VC' };
 const PAY_ST = { awaiting: 'Awaiting payment', confirmed: 'Paid', not_required: 'Pay at pickup' };
 const prodName = (id, fallback) => { const p = A.products.find(x => x.id === id); return p ? I18N.pick(p.name, p.nameAr) : fallback; };
@@ -63,7 +64,9 @@ async function loadAll() {
     API.admin.orders(), API.admin.products(), API.admin.reviews(), API.admin.settings(), API.admin.promos(),
   ]);
   Object.assign(A, { orders, products, reviews, settings, promos });
+  await loadCustomers();
 }
+async function loadCustomers() { try { A.customers = await API.admin.customers(); } catch (e) { A.customers = null; A.ui.custErr = API.errMessage(e); } }
 const unseen = () => A.orders.filter(o => !A.seen || o.created_at > A.seen).length;
 const pendingReviews = () => A.reviews.filter(r => !r.approved).length;
 function markSeen() { A.seen = new Date().toISOString(); store.set('admin.seen', A.seen); updateTitle(); }
@@ -104,11 +107,11 @@ function onOrderChange(payload) {
   } else if (payload.eventType === 'UPDATE') {
     const i = A.orders.findIndex(o => o.id === row.id); if (i >= 0) A.orders[i] = row;
   }
-  updateTitle(); render(); if (A.ui.open) renderDrawer();
+  updateTitle(); render(); if (A.ui.open && !A.ui.oform) renderDrawer();
 }
 
 // ───────────────────────── shell ─────────────────────────
-const NAV = [['overview', 'OVERVIEW'], ['insights', 'INSIGHTS'], ['orders', 'ORDERS'], ['products', 'PRODUCTS'], ['reviews', 'REVIEWS'], ['settings', 'SETTINGS'], ['notifications', 'NOTIFICATIONS']];
+const NAV = [['overview', 'OVERVIEW'], ['insights', 'INSIGHTS'], ['orders', 'ORDERS'], ['customers', 'CUSTOMERS'], ['products', 'PRODUCTS'], ['reviews', 'REVIEWS'], ['pages', 'PAGES'], ['settings', 'SETTINGS'], ['notifications', 'NOTIFICATIONS'], ['export', 'EXPORT']];
 const langBtn = () => `<button data-act="lang" lang="${isAr() ? 'en' : 'ar'}">${isAr() ? 'ENGLISH' : 'عربي'}</button>`;
 function shell(page, body) {
   const counts = { orders: unseen(), reviews: pendingReviews(), insights: A.live.online };
@@ -145,15 +148,15 @@ function viewOverview() {
   const days = A.ui.range;
   const { from, list } = rangeOrders(days);
   const live = list.filter(o => o.status !== 'cancelled');
-  const revenue = live.reduce((a, o) => a + o.total, 0);
+  const revenue = live.reduce((a, o) => a + net(o), 0);
   const today = dayKey(new Date());
-  const todayRev = A.orders.filter(o => o.status !== 'cancelled' && dayKey(o.created_at) === today).reduce((a, o) => a + o.total, 0);
+  const todayRev = A.orders.filter(o => o.status !== 'cancelled' && dayKey(o.created_at) === today).reduce((a, o) => a + net(o), 0);
   const awaiting = A.orders.filter(o => o.payment_status === 'awaiting' && o.status !== 'cancelled').length;
   const toShip = A.orders.filter(o => o.status === 'pending').length;
 
   // previous period, for the delta
   const prevFrom = new Date(from); prevFrom.setDate(prevFrom.getDate() - days);
-  const prevRev = A.orders.filter(o => o.status !== 'cancelled' && new Date(o.created_at) >= prevFrom && new Date(o.created_at) < from).reduce((a, o) => a + o.total, 0);
+  const prevRev = A.orders.filter(o => o.status !== 'cancelled' && new Date(o.created_at) >= prevFrom && new Date(o.created_at) < from).reduce((a, o) => a + net(o), 0);
   const delta = prevRev ? Math.round((revenue - prevRev) / prevRev * 100) : null;
 
   // top products by pieces sold
@@ -195,7 +198,7 @@ function dailySeries(days) {
   const out = [];
   for (let i = 0; i < days; i++) { const d = new Date(from); d.setDate(d.getDate() + i); out.push({ key: dayKey(d), date: d, rev: 0, n: 0 }); }
   const idx = Object.fromEntries(out.map((x, i) => [x.key, i]));
-  A.orders.forEach(o => { if (o.status === 'cancelled') return; const i = idx[dayKey(o.created_at)]; if (i != null) { out[i].rev += o.total; out[i].n++; } });
+  A.orders.forEach(o => { if (o.status === 'cancelled') return; const i = idx[dayKey(o.created_at)]; if (i != null) { out[i].rev += net(o); out[i].n++; } });
   return out;
 }
 function niceMax(v) { if (v <= 0) return 1000; const p = Math.pow(10, Math.floor(Math.log10(v))); const m = v / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p; }
@@ -213,7 +216,8 @@ function drawChart() {
 function drawBars(el, data, valFmt, subFmt, label) {
   const W = el.clientWidth || 600, H = 260, L = 52, R = 8, T = 12, B = 28;
   const pw = W - L - R, ph = H - T - B;
-  const max = niceMax(Math.max(...data.map(d => d.v)));
+  let max = niceMax(Math.max(...data.map(d => d.v)));
+  if (max < 4 && data.every(d => Number.isInteger(d.v))) max = 4;   // small counts: whole-number steps 0–4
   const slot = pw / data.length, bw = Math.max(2, Math.min(24, slot - 2));
   const y = v => T + ph - (v / max) * ph;
   const ticks = [0, .25, .5, .75, 1].map(f => max * f);
@@ -245,7 +249,7 @@ function ordersTable(list) {
       <td><div class="no">${esc(o.order_no)}</div><div class="sm">${fmtDT(o.created_at)}</div></td>
       <td><span dir="auto">${esc(o.customer.name)}</span><div class="sm">${esc(o.customer.phone)} · ${o.fulfil === 'pickup' ? t('Pickup') : esc(cityLabel(o.city || ''))}</div></td>
       <td class="hide-m">${(o.items || []).reduce((a, i) => a + i.qty, 0)}</td>
-      <td class="num">${money(o.total)}</td>
+      <td class="num">${money(o.total)}${o.refunded ? `<div class="sm bad">−${money(o.refunded)}</div>` : ''}</td>
       <td class="hide-m">${t(PAY[o.payment])}<div style="margin-top:4px">${payPill(o.payment_status)}</div></td>
       <td>${statusPill(o.status)}</td></tr>`).join('')}
   </tbody></table></div>`;
@@ -253,7 +257,7 @@ function ordersTable(list) {
 function viewOrders(tab) {
   if (tab) A.ui.otab = tab;
   const cur = A.ui.otab, q = A.ui.oq.trim().toLowerCase();
-  const tabs = [['pending', 'New / Pending'], ['awaiting', 'Awaiting payment'], ['shipped', 'Shipped'], ['received', 'Received'], ['cancelled', 'Cancelled'], ['all', 'All']];
+  const tabs = [['pending', 'New / Pending'], ['awaiting', 'Awaiting payment'], ['shipped', 'Shipped'], ['received', 'Received'], ['exchanged', 'Exchanged'], ['refunded', 'Returned / refunded'], ['cancelled', 'Cancelled'], ['all', 'All']];
   const match = (o, k) => k === 'all' ? true : k === 'awaiting' ? o.payment_status === 'awaiting' && o.status !== 'cancelled' : o.status === k;
   let list = A.orders.filter(o => match(o, cur));
   if (q) list = list.filter(o => [o.order_no, o.customer.name, o.customer.phone, o.customer.email].join(' ').toLowerCase().includes(q));
@@ -263,11 +267,11 @@ function viewOrders(tab) {
     ${ordersTable(list)}`;
 }
 function openOrder(no) {
-  A.ui.open = no; A.ui.cancelConfirm = false;
+  A.ui.open = no; A.ui.cancelConfirm = false; A.ui.oform = null; A.ui.cust = null;
   renderDrawer(); $('#drawer').classList.add('open'); $('#scrim').classList.add('open');
 }
 function closeAll() {
-  A.ui.open = null; A.ui.side = false;
+  A.ui.open = null; A.ui.cust = null; A.ui.oform = null; A.ui.side = false;
   $('#drawer').classList.remove('open'); $('#scrim').classList.remove('open');
   const s = $('.adm-side'); if (s) s.classList.remove('open');
 }
@@ -282,7 +286,7 @@ function renderDrawer() {
     received: t('Hello {name}, we hope you love your ALLURE pieces! Order {no}.', { name: first, no: o.order_no }),
     cancelled: t('Hello {name}, about your ALLURE order {no}:', { name: first, no: o.order_no }),
   };
-  const next = { pending: [['shipped', 'MARK SHIPPED', 'btn-gold']], shipped: [['received', 'MARK RECEIVED', 'btn-gold']], received: [], cancelled: [['pending', 'RESTORE TO PENDING', 'btn-line']] }[o.status];
+  const next = { pending: [['shipped', 'MARK SHIPPED', 'btn-gold']], shipped: [['received', 'MARK RECEIVED', 'btn-gold']], received: [], exchanged: [['shipped', 'MARK SHIPPED', 'btn-gold'], ['received', 'MARK RECEIVED', 'btn-line']], refunded: [], cancelled: [['pending', 'RESTORE TO PENDING', 'btn-line']] }[o.status] || [];
   const toReceive = o.payment === 'instapay' ? t('{amount} (full order)', { amount: money(o.total) })
     : t('{fee} delivery fee first, {rest} cash on delivery', { fee: money(o.delivery_fee), rest: money(o.total - o.delivery_fee) });
   $('#drawer').innerHTML = `<div class="hd"><div><div class="no">${esc(o.order_no)}</div><div class="sm muted" style="font-size:12px">${fmtDT(o.created_at)}</div></div>${statusPill(o.status)}
@@ -291,12 +295,13 @@ function renderDrawer() {
       <div class="adm-card"><h3>${t('STATUS')}</h3>
         <div class="actions" style="margin-top:12px">
           ${next.map(([s, l, cls]) => `<button class="btn ${cls}" data-act="setStatus" data-s="${s}">${t(l)}</button>`).join('')}
-          ${o.status === 'pending' || o.status === 'shipped' ? (A.ui.cancelConfirm
+          ${['pending', 'shipped', 'exchanged'].includes(o.status) ? (A.ui.cancelConfirm
             ? `<button class="btn btn-danger" data-act="setStatus" data-s="cancelled">${t('CONFIRM CANCEL — STOCK IS RETURNED')}</button><button class="btn btn-line" data-act="cancelNo">${t('KEEP ORDER')}</button>`
             : `<button class="btn btn-danger" data-act="cancelAsk">${t('CANCEL ORDER')}</button>`) : ''}
         </div>
-        <div class="kv" style="margin-top:16px">${['cart', 'pending', 'shipped', 'received', 'cancelled'].filter(k => h[k]).map(k => `<span class="k">${t(STATUS_LBL[k])}</span><span>${fmtDT(h[k])}</span>`).join('')}</div>
+        <div class="kv" style="margin-top:16px">${['cart', 'pending', 'shipped', 'received', 'exchanged', 'refunded', 'cancelled'].filter(k => h[k]).map(k => `<span class="k">${t(STATUS_LBL[k])}</span><span>${fmtDT(h[k])}</span>`).join('')}</div>
       </div>
+      ${manageCard(o)}
       <div class="adm-card"><h3>${t('PAYMENT')}</h3>
         <div class="kv" style="margin-top:12px"><span class="k">${t('METHOD')}</span><span>${t(PAY[o.payment])}</span><span class="k">${t('STATUS')}</span><span>${payPill(o.payment_status)}</span>
           ${o.payment_status !== 'not_required' ? `<span class="k">${t('TO RECEIVE')}</span><span>${toReceive}</span>` : ''}</div>
@@ -320,8 +325,11 @@ function renderDrawer() {
           <div class="row"><span>${t('Subtotal')}</span><b>${money(o.subtotal)}</b></div>
           ${o.discount ? `<div class="row"><span>${t('Discount')} (${esc(o.promo_code)})</span><b>−${money(o.discount)}</b></div>` : ''}
           <div class="row"><span>${t('Delivery')}</span><b>${o.delivery_fee ? money(o.delivery_fee) : t('Free')}</b></div>
-          <div class="row total"><span>${t('Total')}</span><b>${money(o.total)}</b></div></div>
+          <div class="row total"><span>${t('Total')}</span><b>${money(o.total)}</b></div>
+          ${o.refunded ? `<div class="row"><span class="bad">${t('Refunded')}</span><b class="bad">−${money(o.refunded)}</b></div>` : ''}</div>
       </div>
+      ${(o.changes || []).length ? `<div class="adm-card"><h3>${t('CHANGE LOG')}</h3>${o.changes.slice().reverse().map(ch => `<div class="log-row"><b>${t({ edit: 'Edited', exchange: 'Exchanged', refund: 'Refunded' }[ch.type] || ch.type)}</b> · <span class="muted">${fmtDT(ch.at)}</span>
+        ${ch.type === 'refund' ? ` · ${money(ch.amount)}${ch.restock ? ' · ' + t('pieces returned to stock') : ''}` : ` · ${money(ch.total_before)} ${arrow()} ${money(ch.total_after)}`}${ch.note ? `<div dir="auto">${esc(ch.note)}</div>` : ''}</div>`).join('')}</div>` : ''}
       <div class="adm-card"><h3>${t('INTERNAL NOTE')}</h3><p class="note">${t('Only you can see this.')}</p>
         <textarea class="field" id="adminNote" style="min-height:80px" dir="auto">${esc(o.admin_note)}</textarea>
         <div class="actions" style="margin-top:10px"><button class="btn btn-ink btn-sm" data-act="saveNote">${t('SAVE NOTE')}</button></div></div>
@@ -431,9 +439,16 @@ function viewProductEdit(id) {
       </div>
       <div class="adm-grid">
         <div class="adm-card"><h3>${t('PHOTOS')}</h3><p class="note">${t('The first photo is the main one. Large photos are resized automatically.')}</p>
+          <p class="hint" style="margin:-8px 0 14px">${t('Recommended: {size} (portrait 3:4), at least 900 × 1200. JPG, product centred on a plain background. You can crop each photo after choosing it.', { size: '<b>1200 × 1600 px</b>' })}</p>
           <div class="photos">${p.images.map((u, i) => `<div class="photo-item" style="background-image:url('${esc(u)}')">${i === 0 ? `<span class="main">${t('MAIN')}</span>` : ''}
-              <div class="ctl"><button type="button" data-act="imgMove" data-i="${i}" data-d="-1" aria-label="${t('Move earlier')}">‹</button><button type="button" data-act="imgRm" data-i="${i}" aria-label="${t('Remove')}">✕</button><button type="button" data-act="imgMove" data-i="${i}" data-d="1" aria-label="${t('Move later')}">›</button></div></div>`).join('')}
+              <div class="ctl"><button type="button" data-act="imgMove" data-i="${i}" data-d="-1" aria-label="${t('Move earlier')}">‹</button><button type="button" data-act="imgCrop" data-i="${i}" aria-label="${t('Crop')}" title="${t('Crop')}">✂</button><button type="button" data-act="imgRm" data-i="${i}" aria-label="${t('Remove')}">✕</button><button type="button" data-act="imgMove" data-i="${i}" data-d="1" aria-label="${t('Move later')}">›</button></div></div>`).join('')}
             <label class="photo-add">${A.ui.uploading ? t('UPLOADING…') : '+ ' + t('ADD PHOTOS')}<input type="file" id="pe-files" accept="image/*" multiple></label></div>
+        </div>
+        <div class="adm-card"><h3>${t('SIZE CHART')}</h3><p class="note">${t('Optional. Customers see a “Size chart” button on the product page.')}</p>
+          <p class="hint" style="margin:-8px 0 12px">${t('A clear photo or screenshot of the size table, at least 1000 px wide.')}</p>
+          ${p.sizeChart ? `<img class="chart-prev" src="${esc(p.sizeChart)}" alt="">` : ''}
+          <div class="actions"><label class="btn btn-ink btn-sm upl">${A.ui.chartUp ? t('UPLOADING…') : p.sizeChart ? t('REPLACE IMAGE') : t('UPLOAD SIZE CHART')}<input type="file" id="pe-chart" accept="image/*" hidden></label>
+            ${p.sizeChart ? `<button type="button" class="btn btn-line btn-sm" data-act="chartRm">${t('REMOVE')}</button>` : ''}</div>
         </div>
         <div class="adm-card"><h3>${t('VISIBILITY')}</h3>
           <div class="checks" style="flex-direction:column;gap:12px;margin-top:14px">
@@ -534,11 +549,20 @@ function viewSettings() {
       <div class="adm-card"><h3>${t('PAYMENT & CONTACT')}</h3><p class="note">${t('Shown to customers at checkout and on the contact pages.')}</p>
         <div class="frm">${inp('instapay', t('InstaPay / VC number'), '0100 111 1111', 'text', 'ltr')}${inp('whatsapp', t('WhatsApp (international, digits only)'), '201001111111', 'text', 'ltr')}
           ${inp('phone', t('Phone (display)'), '+20 100 111 1111', 'text', 'ltr')}${inp('email', t('Email'), 'hello@…', 'email')}
-          ${inp('address', t('Boutique address'), 'Value 2 Mall, New Cairo', 'text', 'ltr')}${inpAr('address_ar', t('Boutique address (Arabic)'), 'فاليو 2 مول، القاهرة الجديدة')}
+          ${inp('address', t('Boutique address'), 'Value Mall, New Cairo', 'text', 'ltr')}${inpAr('address_ar', t('Boutique address (Arabic)'), 'فاليو مول، القاهرة الجديدة')}
           ${inp('hours', t('Opening hours'), '', 'text', 'ltr')}${inpAr('hours_ar', t('Opening hours (Arabic)'))}
           ${inp('mapsUrl', t('Google Maps link'), '', 'text', 'ltr')}${inp('socials.facebook', t('Facebook link'), '', 'text', 'ltr')}
           ${inp('socials.instagram', t('Instagram link'), '', 'text', 'ltr')}${inp('socials.tiktok', t('TikTok link'), '', 'text', 'ltr')}
+          <div class="full">${inp('instapayLink', t('InstaPay payment link (optional)'), 'https://ipn.eg/S/…', 'text', 'ltr')}</div>
+          <div class="full">${inp('siteUrl', t('Shop address (used in emails)'), 'https://www.allure-boutique.org', 'text', 'ltr')}</div>
           <div class="full">${inp('dashboardUrl', t('Dashboard link (added to Telegram alerts)'), 'https://yourshop.com/admin.html', 'text', 'ltr')}</div></div></div>
+      <div class="adm-card"><h3>${t('EMAILS TO CUSTOMERS')}</h3><p class="note">${t('Order confirmations are sent from this name and address. Replies go to the reply-to address.')}</p>
+        <div class="frm">${inp('email.fromName', t('Sender name'), 'ALLURE Boutique')}${inp('email.fromEmail', t('Sender address'), 'orders@allure-boutique.org', 'email')}
+          <div class="full">${inp('email.replyTo', t('Replies go to'), 'you@gmail.com', 'email')}</div></div>
+        <p class="hint" style="margin-top:10px">${t('Setup and test: see Notifications.')}</p></div>
+      <div class="adm-card"><h3>${t('REVIEWS ON THE HOME PAGE')}</h3>
+        <div class="checks" style="margin-top:12px"><label><input type="checkbox" data-set="reviews.showSummary"${(s.reviews || {}).showSummary !== false ? ' checked' : ''}> ${t('Show the average rating and number of reviews')}</label></div>
+        <p class="hint" style="margin-top:10px">${t('Calculated from approved customer reviews.')}</p></div>
       <div class="adm-card"><h3>${t('DELIVERY FEES')}</h3><p class="note">${t('Customers choose their city at checkout. Branch pickup is always free.')}</p>
         <div class="rows">${deliv.map(({ city, fee, ar }, i) => `<div class="rowx c4"><input class="field" dir="ltr" data-deliv="${i}" data-k="city" value="${esc(city)}" placeholder="${t('City')}"><input class="field" dir="rtl" data-deliv="${i}" data-k="ar" value="${esc(ar || '')}" placeholder="${t('Arabic name')}"><input class="field" type="number" min="0" data-deliv="${i}" data-k="fee" value="${esc(fee)}" placeholder="${cur()}"><button type="button" class="rm" data-act="rmCity" data-i="${i}" aria-label="${t('Remove')}">✕</button></div>`).join('')}
           <button type="button" class="add-row" data-act="addCity">+ ${t('ADD CITY')}</button></div></div>
@@ -588,6 +612,7 @@ function viewNotifications() {
 select vault.create_secret('PASTE_CHAT_ID', 'telegram_chat_id');</div></li>
           <li>${t('Come back here, press {a}, then {b}.', { a: `<b>${t('Refresh status')}</b>`, b: `<b>${t('Send test message')}</b>` })}</li>
         </ol></div>
+      ${emailCard()}
       <div class="adm-card"><h3>${t('THIS BROWSER — WHILE THE DASHBOARD IS OPEN')}</h3><p class="note">${t('A sound and a pop-up on this computer or phone the moment an order arrives.')}</p>
         <div class="kv" style="margin:6px 0 16px"><span class="k">${t('POP-UPS')}</span><span>${perm === 'granted' ? `<span class="ok">✓ ${t('Allowed')}</span>` : perm === 'denied' ? `<span class="bad">${t('Blocked — allow notifications for this site in your browser settings')}</span>` : perm === 'unsupported' ? t('Not supported in this browser') : t('Not enabled yet')}</span>
           <span class="k">${t('SOUND')}</span><span>${A.prefs.sound ? `<span class="ok">✓ ${t('On')}</span>` : t('Off')}</span></div>
@@ -694,6 +719,354 @@ function drawInsightsChart() {
   drawBars(el, data, v => t('{n} views', { n: num(v) }), d => `${fmtD(d.date)} · ${n1(d.n, '{n} visitor', '{n} visitors')}`, t('Impressions by day'));
 }
 
+// ───────────────────────── order management (edit · exchange · return/refund · delete) ─────────────────────────
+function manageCard(o) {
+  const f = A.ui.oform;
+  const btn = (k, l, cls = 'btn-line') => `<button class="btn ${cls} btn-sm${f === k ? ' on' : ''}" data-act="oform" data-f="${k}">${t(l)}</button>`;
+  let body = '';
+  if (f === 'edit' || f === 'exchange') body = orderEditor(o, f);
+  else if (f === 'refund') {
+    const left = o.total - (o.refunded || 0);
+    body = `<div class="frm" style="margin-top:14px">
+        <div><label>${t('Amount to refund ({cur})', { cur: cur() })}</label><input class="field" type="number" min="0" max="${left}" id="rf-amount" value="${left}"></div>
+        <div class="checks" style="align-items:end"><label><input type="checkbox" id="rf-restock"${o.restocked ? ' disabled' : ' checked'}> ${o.restocked ? t('Pieces are already back in stock') : t('The pieces came back — return them to stock')}</label></div>
+        <div class="full"><label>${t('Note (reason, how it was refunded…)')}</label><input class="field" id="rf-note" dir="auto"></div></div>
+      <div class="actions" style="margin-top:12px"><button class="btn btn-danger" data-act="doRefund">${t('CONFIRM RETURN / REFUND')}</button><button class="btn btn-line" data-act="oform" data-f="">${t('CANCEL')}</button></div>
+      <p class="hint" style="margin-top:8px">${t('Up to {amount} can still be refunded. The order is marked “Returned / refunded”.', { amount: money(left) })}</p>`;
+  } else if (f === 'delete') {
+    body = `<p class="note" style="margin-top:14px">${t('Deleting removes the order completely — it disappears from reports, exports and the customer’s history. For real orders, use Cancel or Return / refund instead.')}</p>
+      <div class="checks"><label><input type="checkbox" id="del-restock"${o.restocked ? ' disabled' : ' checked'}> ${o.restocked ? t('Pieces are already back in stock') : t('Return its pieces to stock')}</label></div>
+      <div class="actions" style="margin-top:12px"><button class="btn btn-danger" data-act="doDelete">${t('DELETE PERMANENTLY')}</button><button class="btn btn-line" data-act="oform" data-f="">${t('KEEP ORDER')}</button></div>`;
+  }
+  return `<div class="adm-card"><h3>${t('MANAGE ORDER')}</h3>
+    <div class="actions" style="margin-top:12px">${btn('edit', 'EDIT ORDER')}${btn('exchange', 'EXCHANGE')}${btn('refund', 'RETURN / REFUND')}${btn('delete', 'DELETE', 'btn-danger')}</div>
+    ${body}</div>`;
+}
+function startOrderForm(o, f) {
+  A.ui.oform = f;
+  if (f === 'edit' || f === 'exchange') {
+    A.ui.oedit = { customer: { ...o.customer }, fulfil: o.fulfil, city: o.city || '', address: o.address, delivery_fee: o.delivery_fee,
+      discount: o.discount, note: '', items: (o.items || []).map(i => ({ id: i.id, qty: i.qty, unit: i.unit, opts: { ...(i.opts || {}) }, name: i.name, code: i.code })) };
+  }
+}
+function orderEditor(o, mode) {
+  const d = A.ui.oedit, c = d.customer;
+  const sub = d.items.reduce((a, i) => a + (+i.unit || 0) * (+i.qty || 0), 0);
+  const total = Math.max(0, sub - (+d.discount || 0) + (+d.delivery_fee || 0));
+  const prodOpts = sel => A.products.map(p => `<option value="${esc(p.id)}"${p.id === sel ? ' selected' : ''}>${esc(I18N.pick(p.name, p.nameAr))} · #${esc(p.code)}${p.stock < 1 ? ' (' + t('out of stock') + ')' : ''}</option>`).join('');
+  const optEditors = (it, i) => {
+    const p = A.products.find(x => x.id === it.id); const op = (p && p.options) || {}; const out = [];
+    const selectOf = (k, list, label) => `<select class="field" data-oi="${i}" data-k="${k}" aria-label="${label}"><option value="">${label}</option>${list.map(v => `<option${String(it.opts[k] || '') === String(v) ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
+    if (op.colors) out.push(selectOf('color', op.colors.map(x => x.name), t('Color')));
+    if (op.letters) out.push(selectOf('letter', op.letters, t('Letter')));
+    if (op.ringSizes) out.push(selectOf('ringSize', op.ringSizes, t('Ring size')));
+    if (op.bagSizes) out.push(selectOf('bagSize', op.bagSizes, t('Bag size')));
+    if (op.setParts) out.push(`<div class="checks">${op.setParts.map(x => `<label><input type="checkbox" data-op="${i}" value="${esc(x.name)}"${(it.opts.parts || []).includes(x.name) ? ' checked' : ''}> ${esc(I18N.pick(x.name, x.ar))}</label>`).join('')}</div>`);
+    return out.join('');
+  };
+  return `<div class="oedit">
+    ${mode === 'exchange' ? `<p class="note" style="margin-top:14px">${t('Change the pieces to what the customer is taking instead. Returned pieces go back to stock, new ones are taken out, and the order is marked “Exchanged”.')}</p>` : ''}
+    <h4>${t('PIECES')}</h4>
+    ${d.items.map((it, i) => `<div class="oe-item">
+      <select class="field" data-oi="${i}" data-k="id">${prodOpts(it.id)}</select>
+      <div class="oe-row"><label>${t('Qty')}<input class="field" type="number" min="1" data-oi="${i}" data-k="qty" value="${esc(it.qty)}"></label>
+        <label>${t('Unit price')}<input class="field" type="number" min="0" data-oi="${i}" data-k="unit" value="${esc(it.unit)}"></label>
+        <button type="button" class="rm" data-act="oeRm" data-i="${i}" aria-label="${t('Remove')}">✕</button></div>
+      <div class="oe-opts">${optEditors(it, i)}</div></div>`).join('')}
+    <button type="button" class="add-row" data-act="oeAdd">+ ${t('ADD PIECE')}</button>
+    <h4>${t('CUSTOMER & DELIVERY')}</h4>
+    <div class="frm">
+      <div><label>${t('Name')}</label><input class="field" dir="auto" data-oe="customer.name" value="${esc(c.name)}"></div>
+      <div><label>${t('Phone')}</label><input class="field" type="tel" data-oe="customer.phone" value="${esc(c.phone)}"></div>
+      <div><label>${t('Another phone (optional)')}</label><input class="field" type="tel" data-oe="customer.phone2" value="${esc(c.phone2 || '')}"></div>
+      <div><label>${t('Email')}</label><input class="field" type="email" data-oe="customer.email" value="${esc(c.email || '')}"></div>
+      <div><label>${t('Delivery')}</label><select class="field" data-oe="fulfil"><option value="delivery"${d.fulfil === 'delivery' ? ' selected' : ''}>${t('Deliver to my address')}</option><option value="pickup"${d.fulfil === 'pickup' ? ' selected' : ''}>${t('Receive from our branch')}</option></select></div>
+      <div><label>${t('City')}</label><select class="field" data-oe="city"><option value=""></option>${(A.settings.delivery || []).map(x => `<option value="${esc(x.city)}"${x.city === d.city ? ' selected' : ''}>${esc(cityLabel(x.city))}</option>`).join('')}</select></div>
+      <div class="full"><label>${t('Address')}</label><input class="field" dir="auto" data-oe="address" value="${esc(d.address)}"></div>
+      <div><label>${t('Delivery fee ({cur})', { cur: cur() })}</label><input class="field" type="number" min="0" data-oe="delivery_fee" value="${esc(d.delivery_fee)}"></div>
+      <div><label>${t('Discount ({cur})', { cur: cur() })}</label><input class="field" type="number" min="0" data-oe="discount" value="${esc(d.discount)}"></div>
+      <div class="full"><label>${mode === 'exchange' ? t('What was exchanged and why (required)') : t('Note about this change (optional)')}</label><input class="field" dir="auto" data-oe="note" value="${esc(d.note)}"></div>
+    </div>
+    <div class="oe-total">${t('New total')}: <b id="oeTotal">${money(total)}</b> <span class="muted">(${t('was {amount}', { amount: money(o.total) })})</span></div>
+    <div class="actions" style="margin-top:12px"><button class="btn btn-gold" data-act="doEdit">${mode === 'exchange' ? t('SAVE EXCHANGE') : t('SAVE CHANGES')}</button><button class="btn btn-line" data-act="oform" data-f="">${t('CANCEL')}</button></div>
+  </div>`;
+}
+
+// ───────────────────────── customers ─────────────────────────
+function customerStats() {
+  const C = A.customers || { accounts: [], guests: [], blocked_phones: [] };
+  const buyers = {};
+  A.orders.filter(o => o.status !== 'cancelled').forEach(o => { const k = o.user_id || 'p:' + o.customer.phone; buyers[k] = (buyers[k] || 0) + 1; });
+  const counts = Object.values(buyers);
+  const since = new Date(); since.setDate(since.getDate() - 29); since.setHours(0, 0, 0, 0);
+  const all = [...C.accounts.filter(a => a.role !== 'admin').map(a => ({ ...a, kind: 'account' })), ...C.guests.map(g => ({ ...g, kind: 'guest' }))];
+  return {
+    C, all,
+    accounts: C.accounts.filter(a => a.role !== 'admin').length,
+    newAccounts: C.accounts.filter(a => a.role !== 'admin' && new Date(a.created_at) >= since).length,
+    guests: C.guests.length,
+    buyers: counts.length,
+    repeat: counts.length ? Math.round(counts.filter(n => n > 1).length / counts.length * 100) : 0,
+    avgSpend: all.filter(x => +x.spent > 0).length ? all.reduce((a, x) => a + (+x.spent || 0), 0) / all.filter(x => +x.spent > 0).length : 0,
+    top: all.filter(x => +x.spent > 0).sort((a, b) => b.spent - a.spent).slice(0, 5),
+    blocked: C.accounts.filter(a => a.blocked).length + C.blocked_phones.length,
+  };
+}
+function viewCustomers(tab) {
+  if (tab) A.ui.ctab = tab;
+  const cur0 = A.ui.ctab || 'accounts';
+  if (!A.customers) return head(t('Customers')) + `<div class="adm-card"><div class="chart-empty">${A.ui.custErr ? `<span class="bad">${esc(A.ui.custErr)}</span><br>${t('If you just updated the site, run supabase/schema.sql again in the SQL Editor.')}` : t('Loading…')}</div></div>`;
+  const st = customerStats(), q = (A.ui.cq || '').trim().toLowerCase();
+  const match = x => !q || [x.name, x.email, x.phone].join(' ').toLowerCase().includes(q);
+  const tabs = [['accounts', 'Accounts', st.accounts], ['guests', 'Guest buyers', st.guests], ['blocked', 'Blocked', st.blocked]];
+  let table = '';
+  if (cur0 === 'accounts') {
+    const list = st.C.accounts.filter(a => a.role !== 'admin').filter(match);
+    table = list.length ? `<div class="atbl-wrap"><table class="atbl"><thead><tr><th>${t('CUSTOMER')}</th><th class="hide-m">${t('PHONE')}</th><th class="num">${t('ORDERS')}</th><th class="num">${t('SPENT')}</th><th class="hide-m">${t('LAST ORDER')}</th><th class="hide-m">${t('JOINED')}</th><th></th></tr></thead><tbody>
+      ${list.map(a => `<tr data-act="openCust" data-k="u:${esc(a.id)}"><td><span dir="auto">${esc(a.name || '—')}</span><div class="sm">${esc(a.email)}</div></td><td class="hide-m" dir="ltr">${esc(a.phone)}</td>
+        <td class="num">${a.orders}</td><td class="num">${money(a.spent)}</td><td class="hide-m">${a.last_order ? fmtD(a.last_order) : '—'}</td><td class="hide-m">${fmtD(a.created_at)}</td>
+        <td>${a.blocked ? `<span class="pill2 awaiting">${t('BLOCKED')}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>` : `<div class="chart-empty">${t('No customers match.')}</div>`;
+  } else if (cur0 === 'guests') {
+    const list = st.C.guests.filter(match);
+    table = list.length ? `<div class="atbl-wrap"><table class="atbl"><thead><tr><th>${t('CUSTOMER')}</th><th>${t('PHONE')}</th><th class="num">${t('ORDERS')}</th><th class="num">${t('SPENT')}</th><th class="hide-m">${t('LAST ORDER')}</th><th></th></tr></thead><tbody>
+      ${list.map(g => `<tr data-act="openCust" data-k="p:${esc(g.phone)}"><td><span dir="auto">${esc(g.name)}</span><div class="sm">${esc(g.email || '')}</div></td><td dir="ltr">${esc(g.phone)}</td>
+        <td class="num">${g.orders}</td><td class="num">${money(g.spent)}</td><td class="hide-m">${fmtD(g.last_order)}</td><td>${g.blocked ? `<span class="pill2 awaiting">${t('BLOCKED')}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>` : `<div class="chart-empty">${t('No guest buyers yet.')}</div>`;
+  } else {
+    const accs = st.C.accounts.filter(a => a.blocked);
+    table = `<div class="adm-card"><h3>${t('BLOCK A PHONE NUMBER')}</h3><p class="note">${t('Blocked numbers can’t place orders, as a guest or with an account.')}</p>
+        <form class="frm" data-form="blockPhone" style="grid-template-columns:1fr 2fr auto;align-items:end"><div><label>${t('Phone')}</label><input class="field" type="tel" id="bp-phone" placeholder="01xxxxxxxxx"></div>
+        <div><label>${t('Reason (only you see this)')}</label><input class="field" id="bp-reason" dir="auto"></div><button class="btn btn-danger" type="submit" style="height:48px">${t('BLOCK')}</button></form></div>
+      <div class="atbl-wrap mt"><table class="atbl"><thead><tr><th>${t('BLOCKED')}</th><th>${t('REASON')}</th><th class="hide-m">${t('SINCE')}</th><th></th></tr></thead><tbody>
+        ${accs.map(a => `<tr style="cursor:default"><td>${esc(a.name || a.email)}<div class="sm">${t('Account')} · ${esc(a.email)}</div></td><td dir="auto">${esc(a.blocked_reason || '—')}</td><td class="hide-m">${a.blocked_at ? fmtD(a.blocked_at) : '—'}</td>
+          <td class="num"><button class="btn btn-line btn-sm" data-act="unblockAcc" data-id="${esc(a.id)}">${t('UNBLOCK')}</button></td></tr>`).join('')}
+        ${st.C.blocked_phones.map(b => `<tr style="cursor:default"><td dir="ltr">${esc(b.phone)}<div class="sm">${t('Phone number')}</div></td><td dir="auto">${esc(b.reason || '—')}</td><td class="hide-m">${fmtD(b.created_at)}</td>
+          <td class="num"><button class="btn btn-line btn-sm" data-act="unblockPhone" data-p="${esc(b.phone)}">${t('UNBLOCK')}</button></td></tr>`).join('')}
+        ${!accs.length && !st.C.blocked_phones.length ? `<tr style="cursor:default"><td colspan="4" class="muted">${t('Nobody is blocked.')}</td></tr>` : ''}</tbody></table></div>`;
+  }
+  const maxTop = st.top.length ? +st.top[0].spent : 1;
+  return head(t('Customers'), t('Everyone who has an account or has ordered. Click a customer to see their orders, edit or block them.')) + `
+    <div class="tiles">
+      <div class="tile big"><div class="lbl">${t('Customer accounts')}</div><div class="val">${num(st.accounts)}</div><div class="delta">${t('{n} new in the last 30 days', { n: st.newAccounts })}</div></div>
+      <div class="tile"><div class="lbl">${t('Guest buyers')}</div><div class="val">${num(st.guests)}</div></div>
+      <div class="tile"><div class="lbl">${t('Repeat customers')}</div><div class="val">${st.repeat}%</div><div class="delta">${t('ordered more than once')}</div></div>
+      <div class="tile"><div class="lbl">${t('Average spend')}</div><div class="val">${compact(st.avgSpend)}<small>${cur()}</small></div><div class="delta">${t('per customer')}</div></div>
+      <div class="tile"><div class="lbl">${t('Blocked')}</div><div class="val">${st.blocked}</div></div>
+    </div>
+    <div class="adm-grid g-main mt">
+      <div class="adm-card"><h3>${t('NEW ACCOUNTS BY DAY')}</h3><p class="note">${t('Sign-ups, last 30 days')}</p><div class="chart-wrap" id="custChart"></div></div>
+      <div class="adm-card"><h3>${t('TOP CUSTOMERS')}</h3><p class="note">${t('By total spent')}</p>
+        ${st.top.length ? `<ul class="rank">${st.top.map(x => `<li><span dir="auto">${esc(x.name || x.email || x.phone)}${x.kind === 'guest' ? ` <span class="pill2 off">${t('GUEST')}</span>` : ''}</span><span class="v">${money(x.spent)}</span><span class="meter"><i style="width:${Math.max(4, x.spent / maxTop * 100)}%"></i></span></li>`).join('')}</ul>` : `<div class="chart-empty">${t('No sales yet.')}</div>`}</div>
+    </div>
+    <div class="tabs2 mt">${tabs.map(([k, l, n]) => `<button class="${cur0 === k ? 'on' : ''}" data-act="go" data-href="#/customers/${k}">${t(l)}<i>${n}</i></button>`).join('')}</div>
+    ${cur0 !== 'blocked' ? `<div class="atools"><input class="field" id="cq" type="search" placeholder="${t('Search name, email or phone')}" value="${esc(A.ui.cq || '')}"></div>` : ''}
+    ${table}`;
+}
+function drawCustomerChart() {
+  const el = $('#custChart'); if (!el || !A.customers) return;
+  const from = new Date(); from.setHours(0, 0, 0, 0); from.setDate(from.getDate() - 29);
+  const data = []; for (let i = 0; i < 30; i++) { const d = new Date(from); d.setDate(d.getDate() + i); data.push({ key: dayKey(d), date: d, v: 0 }); }
+  const idx = Object.fromEntries(data.map((x, i) => [x.key, i]));
+  A.customers.accounts.forEach(a => { if (a.role === 'admin') return; const i = idx[dayKey(a.created_at)]; if (i != null) data[i].v++; });
+  if (!data.some(d => d.v)) { el.innerHTML = `<div class="chart-empty">${t('No new accounts in the last 30 days.')}</div>`; return; }
+  drawBars(el, data, v => n1(v, '{n} new account', '{n} new accounts'), d => fmtD(d.date), t('New accounts by day'));
+}
+function openCustomer(k) {
+  A.ui.open = null; A.ui.cust = k; A.ui.cform = null;
+  renderCustomer(); $('#drawer').classList.add('open'); $('#scrim').classList.add('open');
+}
+function renderCustomer() {
+  const k = A.ui.cust; if (!k || !A.customers) return;
+  const isAcc = k.startsWith('u:'), key = k.slice(2);
+  const a = isAcc ? A.customers.accounts.find(x => x.id === key) : null;
+  const g = !isAcc ? A.customers.guests.find(x => x.phone === key) : null;
+  const who = a || g; if (!who) return;
+  const orders = A.orders.filter(o => isAcc ? o.user_id === key : (!o.user_id && o.customer.phone === key));
+  const phoneBlocked = (A.customers.blocked_phones || []).some(b => b.phone === (who.phone || ''));
+  $('#drawer').innerHTML = `<div class="hd"><div><div class="no" dir="auto" style="font-size:24px">${esc(who.name || who.email || who.phone)}</div><div class="sm muted" style="font-size:12px">${isAcc ? t('Account') + ' · ' + t('joined {date}', { date: fmtD(a.created_at) }) : t('Guest buyer')}</div></div>
+      ${(a && a.blocked) || phoneBlocked ? `<span class="pill2 awaiting">${t('BLOCKED')}</span>` : ''}<button class="icon-btn x" data-act="closeAll" aria-label="${t('Close')}">✕</button></div>
+    <div class="bd">
+      <div class="adm-card"><h3>${t('DETAILS')}</h3>
+        ${isAcc ? `<form class="frm" data-form="custEdit" style="margin-top:12px">
+            <div><label>${t('Name')}</label><input class="field" dir="auto" id="ce-name" value="${esc(a.name)}"></div>
+            <div><label>${t('Phone')}</label><input class="field" type="tel" id="ce-phone" value="${esc(a.phone)}"></div>
+            <div class="full"><label>${t('Email')}</label><input class="field" type="email" value="${esc(a.email)}" disabled></div>
+            <div class="full"><button class="btn btn-ink btn-sm" type="submit">${t('SAVE CHANGES')}</button></div></form>`
+          : `<div class="kv" style="margin-top:12px"><span class="k">${t('PHONE')}</span><span dir="ltr" style="text-align:start">${esc(g.phone)}</span><span class="k">${t('EMAIL')}</span><span>${esc(g.email || '—')}</span></div>`}
+        <div class="kv" style="margin-top:14px"><span class="k">${t('ORDERS')}</span><span>${who.orders}</span><span class="k">${t('SPENT')}</span><span>${money(who.spent)}</span></div>
+        ${who.phone ? `<div class="actions" style="margin-top:14px"><a class="btn btn-gold btn-sm" href="https://wa.me/2${esc(who.phone)}" target="_blank" rel="noopener">${t('WHATSAPP')}</a><a class="btn btn-line btn-sm" href="tel:${esc(who.phone)}">${t('CALL')}</a></div>` : ''}
+      </div>
+      <div class="adm-card"><h3>${t('BLOCKING')}</h3>
+        ${(a && a.blocked) || (!isAcc && phoneBlocked)
+          ? `<p class="note" style="margin-top:10px">${t('Blocked — can’t place orders or post reviews.')}${a && a.blocked_reason ? ' ' + t('Reason: {r}', { r: esc(a.blocked_reason) }) : ''}</p>
+             <button class="btn btn-line btn-sm" data-act="${isAcc ? 'unblockAcc' : 'unblockPhone'}" data-id="${isAcc ? esc(key) : ''}" data-p="${isAcc ? '' : esc(key)}">${t('UNBLOCK')}</button>`
+          : `<p class="note" style="margin-top:10px">${isAcc ? t('Blocks the account and its phone number from ordering and posting reviews.') : t('Blocks this phone number from placing orders.')}</p>
+             <div class="frm" style="grid-template-columns:1fr auto;align-items:end"><div><label>${t('Reason (only you see this)')}</label><input class="field" id="cb-reason" dir="auto"></div>
+             <button class="btn btn-danger btn-sm" style="height:44px" data-act="${isAcc ? 'blockAcc' : 'blockGuest'}" data-id="${esc(key)}">${t('BLOCK')}</button></div>`}
+      </div>
+      <div class="adm-card"><h3>${t('ORDERS')}</h3>
+        ${orders.length ? orders.map(o => `<div class="mini" style="cursor:pointer" data-act="openOrder" data-no="${esc(o.order_no)}"><div><div class="nm">${esc(o.order_no)}</div><div class="d">${fmtDT(o.created_at)} · ${n1((o.items || []).reduce((s2, i) => s2 + i.qty, 0), '{n} item', '{n} items')}</div></div>
+          <div class="pr">${statusPill(o.status)} ${money(o.total)}</div></div>`).join('') : `<p class="note">${t('No orders yet.')}</p>`}
+      </div>
+    </div>`;
+}
+
+// ───────────────────────── policy pages ─────────────────────────
+function viewPages(slug0) {
+  const slug = PAGES.slugs.includes(slug0) ? slug0 : (A.ui.pslug || 'policy'); A.ui.pslug = slug;
+  const pages = A.settings.pages = A.settings.pages || {}; const pg = pages[slug] = pages[slug] || { en: '', ar: '' };
+  const names = { policy: 'Our Policy', shipping: 'Shipping Policy', terms: 'Terms of Service' };
+  const box = (l, dir, label) => `<div class="adm-card"><div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap"><h3>${label}</h3>
+      <button type="button" class="tbl-toggle" data-act="pageDefault" data-l="${l}">${t('Start from the standard text')}</button></div>
+      <textarea class="field page-ta" dir="${dir}" lang="${l}" data-page="${l}" placeholder="${t('Empty = the standard text is shown.')}">${esc(pg[l] || '')}</textarea>
+      <div class="hint" style="margin-top:6px">${t('Preview')}:</div><div class="prose page-prev" dir="${dir}" id="prev-${l}">${PAGES.render(pg[l] || PAGES.defaults(l)[slug])}</div></div>`;
+  return head(t('Pages'), t('Edit the policy pages customers see. Each language is separate; leave one empty to show the standard text.')) + `
+    <div class="tabs2">${PAGES.slugs.map(k => `<button class="${slug === k ? 'on' : ''}" data-act="go" data-href="#/pages/${k}">${t(names[k])}</button>`).join('')}</div>
+    <p class="hint" style="margin-bottom:14px">${t('Formatting: start a line with ## for a heading, - for a bullet, wrap words in **double stars** for bold. Write {delivery_fees} where the delivery price list should appear.')}</p>
+    <div class="adm-grid g2">${box('en', 'ltr', t('ENGLISH'))}${box('ar', 'rtl', t('ARABIC'))}</div>
+    <div class="save-bar"><button class="btn btn-gold" data-act="savePages">${t('SAVE PAGES')}</button><a class="btn btn-line" href="index.html?preview=1#/page/${slug}" target="_blank" rel="noopener">${t('VIEW ON SHOP')} ↗</a><span class="msg${A.ui.pOk ? '' : ' err'}">${esc(A.ui.pMsg || '')}</span></div>`;
+}
+
+// ───────────────────────── export to Excel ─────────────────────────
+const toLocalInput = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
+function exportPreset(k) {
+  const now = new Date(), s0 = new Date(now); s0.setHours(0, 0, 0, 0);
+  let from = s0, to = now;
+  if (k === '7') { from = new Date(s0); from.setDate(from.getDate() - 6); }
+  if (k === 'month') from = new Date(now.getFullYear(), now.getMonth(), 1);
+  if (k === 'lastmonth') { from = new Date(now.getFullYear(), now.getMonth() - 1, 1); to = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, -1); }
+  if (k === 'year') from = new Date(now.getFullYear(), 0, 1);
+  if (k === 'all') from = new Date(2020, 0, 1);
+  A.ui.exFrom = toLocalInput(from); A.ui.exTo = toLocalInput(to);
+}
+function viewExport() {
+  if (!A.ui.exFrom) exportPreset('month');
+  const sheets = A.ui.exSheets = A.ui.exSheets || { orders: true, items: true, customers: true, products: true, reviews: true };
+  const labels = { orders: 'Orders', items: 'Order items', customers: 'Customers', products: 'Products & sales', reviews: 'Reviews' };
+  const from = new Date(A.ui.exFrom), to = new Date(A.ui.exTo);
+  const n = A.orders.filter(o => new Date(o.created_at) >= from && new Date(o.created_at) <= to).length;
+  return head(t('Export'), t('Download your data as an Excel file for any period, to the minute.')) + `
+    <div class="adm-card"><h3>${t('PERIOD')}</h3>
+      <div class="actions" style="margin:12px 0 16px">${[['today', 'Today'], ['7', 'Last 7 days'], ['month', 'This month'], ['lastmonth', 'Last month'], ['year', 'This year'], ['all', 'All time']].map(([k, l]) => `<button class="btn btn-line btn-sm" data-act="exPreset" data-k="${k}">${t(l)}</button>`).join('')}</div>
+      <div class="frm"><div><label>${t('From')}</label><input class="field" type="datetime-local" id="ex-from" value="${esc(A.ui.exFrom)}"></div>
+        <div><label>${t('To')}</label><input class="field" type="datetime-local" id="ex-to" value="${esc(A.ui.exTo)}"></div></div>
+      <h3 style="margin-top:22px">${t('INCLUDE')}</h3>
+      <div class="checks" style="margin-top:10px">${Object.keys(labels).map(k => `<label><input type="checkbox" data-sheet="${k}"${sheets[k] ? ' checked' : ''}> ${t(labels[k])}</label>`).join('')}</div>
+      <div class="actions" style="margin-top:22px"><button class="btn btn-gold" data-act="doExport"${A.ui.exBusy ? ' disabled' : ''}>${A.ui.exBusy ? t('PREPARING…') : t('DOWNLOAD EXCEL FILE')}</button>
+        <span class="muted" style="align-self:center;font-size:13px">${n1(n, '{n} order in this period', '{n} orders in this period')}</span></div>
+      <p class="hint" style="margin-top:12px">${t('Times are your computer’s local time. Customers and products are summarised for the chosen period.')}</p></div>`;
+}
+async function doExport() {
+  if (!window.XLSX) return toast(t('The Excel tool didn’t load — please refresh the page.'));
+  const from = new Date(A.ui.exFrom), to = new Date(A.ui.exTo);
+  if (!(from <= to)) return toast(t('“From” must be before “To”.'));
+  A.ui.exBusy = true; render();
+  try {
+    const all = await API.admin.orders(from.toISOString());
+    const orders = all.filter(o => new Date(o.created_at) <= to);
+    const S2 = A.ui.exSheets, wb = XLSX.utils.book_new();
+    const add = (name, rows, widths) => { const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ [t('No data')]: '' }], { cellDates: true }); if (widths) ws['!cols'] = widths.map(w => ({ wch: w })); XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31)); };
+    const optStr = o => optText(o || {});
+    if (S2.orders) add(t('Orders'), orders.map(o => ({
+      [t('Order')]: o.order_no, [t('Date')]: new Date(o.created_at), [t('Status')]: t(STATUS_LBL[o.status] || o.status),
+      [t('Customer')]: o.customer.name, [t('Phone')]: o.customer.phone, [t('Second phone')]: o.customer.phone2 || '', [t('Email')]: o.customer.email,
+      [t('Account')]: o.user_id ? t('Yes') : t('Guest'), [t('Delivery')]: o.fulfil === 'pickup' ? t('Branch pickup') : t('Delivery'), [t('City')]: o.city || '', [t('Address')]: o.address,
+      [t('Payment')]: t(PAY[o.payment]), [t('Payment status')]: t(PAY_ST[o.payment_status] || o.payment_status), [t('Pieces')]: (o.items || []).reduce((a, i) => a + i.qty, 0),
+      [t('Subtotal')]: o.subtotal, [t('Discount')]: o.discount, [t('Discount code')]: o.promo_code || '', [t('Delivery fee')]: o.delivery_fee, [t('Total')]: o.total,
+      [t('Refunded')]: o.refunded || 0, [t('Net')]: net(o), [t('Customer note')]: o.note, [t('Internal note')]: o.admin_note,
+    })), [10, 18, 14, 22, 14, 14, 26, 9, 14, 14, 40, 18, 18, 8, 10, 10, 12, 12, 10, 10, 10, 30, 30]);
+    if (S2.items) add(t('Order items'), orders.flatMap(o => (o.items || []).map(i => ({
+      [t('Order')]: o.order_no, [t('Date')]: new Date(o.created_at), [t('Status')]: t(STATUS_LBL[o.status] || o.status), [t('Code')]: i.code, [t('Product')]: i.name,
+      [t('Options')]: optStr(i.opts), [t('Qty')]: i.qty, [t('Unit price')]: i.unit, [t('Line total')]: i.unit * i.qty,
+    }))), [10, 18, 14, 8, 30, 30, 6, 10, 10]);
+    if (S2.customers) {
+      const m = {};
+      orders.forEach(o => { const k = o.user_id || 'p:' + o.customer.phone; const r = m[k] = m[k] || { name: o.customer.name, phone: o.customer.phone, email: o.customer.email, acc: !!o.user_id, n: 0, spent: 0, first: o.created_at, last: o.created_at };
+        r.n++; if (o.status !== 'cancelled') r.spent += net(o); if (o.created_at < r.first) r.first = o.created_at; if (o.created_at > r.last) r.last = o.created_at; });
+      add(t('Customers'), Object.values(m).sort((a, b) => b.spent - a.spent).map(r => ({ [t('Customer')]: r.name, [t('Phone')]: r.phone, [t('Email')]: r.email, [t('Account')]: r.acc ? t('Yes') : t('Guest'),
+        [t('Orders')]: r.n, [t('Spent')]: r.spent, [t('First order')]: new Date(r.first), [t('Last order')]: new Date(r.last) })), [24, 14, 28, 9, 8, 12, 18, 18]);
+    }
+    if (S2.products) {
+      const sold = {}; orders.filter(o => o.status !== 'cancelled').forEach(o => (o.items || []).forEach(i => { const r = sold[i.id] = sold[i.id] || { q: 0, rev: 0 }; r.q += i.qty; r.rev += i.qty * i.unit; }));
+      add(t('Products & sales'), A.products.map(p => ({ [t('Code')]: p.code, [t('Product')]: p.name, [t('Arabic name')]: p.nameAr, [t('Category')]: p.cat, [t('Subcategory')]: p.sub,
+        [t('Price')]: p.price, [t('Old price')]: p.oldPrice || '', [t('Stock')]: p.stock, [t('In the shop')]: p.active ? t('Yes') : t('No'),
+        [t('Pieces sold')]: (sold[p.id] || {}).q || 0, [t('Sales')]: (sold[p.id] || {}).rev || 0 })), [8, 30, 26, 12, 14, 10, 10, 8, 10, 10, 12]);
+    }
+    if (S2.reviews) add(t('Reviews'), A.reviews.filter(r => new Date(r.created_at) >= from && new Date(r.created_at) <= to).map(r => ({
+      [t('Date')]: new Date(r.created_at), [t('Name')]: r.name, [t('Rating')]: r.rating, [t('Review')]: r.text, [t('Published')]: r.approved ? t('Yes') : t('No') })), [18, 20, 8, 60, 10]);
+    const stamp = d => toLocalInput(d).replace('T', '_').replace(':', '');
+    XLSX.writeFile(wb, `ALLURE_${stamp(from)}_to_${stamp(to)}.xlsx`, { compression: true });
+    toast(t('Excel file downloaded'));
+  } catch (e) { toast(API.errMessage(e)); }
+  A.ui.exBusy = false; render();
+}
+
+// ───────────────────────── image cropping ─────────────────────────
+// Resolves to a Blob (cropped), 'orig' (use the picture as it is) or null (cancelled).
+function cropImage(src, { title, hint = '', ratios = [['3:4', 3 / 4]], maxSide = 1600 }) {
+  return new Promise(resolve => {
+    const m = $('#cropModal');
+    m.innerHTML = `<div class="crop-box" role="dialog" aria-label="${esc(title)}"><div class="crop-head"><b>${esc(title)}</b>${hint ? `<span class="hint">${hint}</span>` : ''}</div>
+      <div class="crop-stage"><img id="cropImg" alt=""></div>
+      <div class="crop-tools">${ratios.map(([l, r], i) => `<button type="button" class="btn btn-line btn-sm${i === 0 ? ' on' : ''}" data-crop="ratio" data-r="${r}">${t(l)}</button>`).join('')}
+        <button type="button" class="btn btn-line btn-sm" data-crop="rotate">⟳ ${t('Rotate')}</button><button type="button" class="btn btn-line btn-sm" data-crop="zin">＋</button><button type="button" class="btn btn-line btn-sm" data-crop="zout">－</button></div>
+      <div class="actions crop-actions"><button type="button" class="btn btn-gold" data-crop="ok">${t('CROP & USE')}</button><button type="button" class="btn btn-line" data-crop="orig">${t('USE WITHOUT CROPPING')}</button><button type="button" class="btn btn-line" data-crop="cancel">${t('CANCEL')}</button></div></div>`;
+    m.hidden = false;
+    const img = $('#cropImg'); img.src = src;
+    let cropper = null;
+    img.onload = () => { cropper = new Cropper(img, { aspectRatio: ratios[0][1], viewMode: 1, autoCropArea: 1, background: false, responsive: true }); };
+    const done = v => { if (cropper) cropper.destroy(); m.hidden = true; m.innerHTML = ''; m.onclick = null; resolve(v); };
+    m.onclick = e => {
+      const b = e.target.closest('[data-crop]'); if (!b) return;
+      const a = b.dataset.crop;
+      if (a === 'cancel') return done(null);
+      if (a === 'orig') return done('orig');
+      if (!cropper) return;
+      if (a === 'rotate') cropper.rotate(90);
+      if (a === 'zin') cropper.zoom(0.1);
+      if (a === 'zout') cropper.zoom(-0.1);
+      if (a === 'ratio') { cropper.setAspectRatio(+b.dataset.r || NaN); m.querySelectorAll('[data-crop=ratio]').forEach(x => x.classList.toggle('on', x === b)); }
+      if (a === 'ok') cropper.getCroppedCanvas({ maxWidth: maxSide, maxHeight: maxSide, imageSmoothingQuality: 'high', fillColor: '#ffffff' })
+        .toBlob(bl => done(bl), 'image/jpeg', 0.88);
+    };
+  });
+}
+const PRODUCT_CROP = () => ({ title: t('Crop product photo'), hint: t('Recommended: {size} (portrait 3:4).', { size: '1200 × 1600 px' }), ratios: [['3:4 (recommended)', 3 / 4], ['1:1', 1], ['Free', NaN]], maxSide: 1600 });
+const BANNER_CROP = () => ({ title: t('Crop banner'), hint: t('Recommended: {size}.', { size: '2400 × 1100 px' }), ratios: [['Banner 24:11', 24 / 11], ['Free', NaN]], maxSide: 2400 });
+const CHART_CROP = () => ({ title: t('Crop size chart'), hint: t('Keep the whole table readable.'), ratios: [['Free', NaN], ['1:1', 1]], maxSide: 2000 });
+async function cropAndUpload(fileOrUrl, opts, folder) {
+  let src, original = null;
+  if (typeof fileOrUrl === 'string') {
+    const res = await fetch(fileOrUrl); original = await res.blob(); src = URL.createObjectURL(original);
+  } else { original = fileOrUrl; src = URL.createObjectURL(fileOrUrl); }
+  const r = await cropImage(src, opts);
+  URL.revokeObjectURL(src);
+  if (r === null) return null;
+  const file = r === 'orig' ? await shrink(original instanceof File ? original : new File([original], 'photo.jpg', { type: original.type || 'image/jpeg' }), opts.maxSide)
+    : new File([r], 'photo.jpg', { type: 'image/jpeg' });
+  return API.admin.uploadImage(file, folder);
+}
+
+// ───────────────────────── email setup (notifications page) ─────────────────────────
+function emailCard() {
+  const es = A.ui.es, em = A.settings.email || {};
+  return `<div class="adm-card"><h3>${t('EMAIL — ORDER CONFIRMATIONS')}</h3><p class="note">${t('Every customer gets an email with their order number, items, total and payment steps. Sent with Resend (free).')}</p>
+    <div class="kv" style="margin:6px 0 16px"><span class="k">${t('RESEND KEY')}</span><span>${es ? (es.key ? `<span class="ok">✓ ${t('Saved')}</span>` : `<span class="bad">${t('Not set')}</span>`) : '…'}</span>
+      <span class="k">${t('SENDER')}</span><span>${esc((em.fromName || 'ALLURE Boutique') + ' <' + (em.fromEmail || 'onboarding@resend.dev') + '>')}</span></div>
+    <form class="frm" data-form="testEmail" style="grid-template-columns:1fr auto;align-items:end"><div><label>${t('Send a test email to')}</label><input class="field" type="email" id="te-to" placeholder="you@gmail.com" value="${esc(A.ui.teTo || em.replyTo || '')}"></div>
+      <button class="btn btn-gold" type="submit" style="height:48px"${es && es.key ? '' : ' disabled'}>${t('SEND TEST')}</button></form>
+    ${A.ui.esMsg ? `<p class="note" style="margin-top:12px">${A.ui.esMsg}</p>` : ''}
+    <h3 style="margin-top:22px">${t('ONE-TIME SETUP (≈ 10 MINUTES)')}</h3>
+    <ol class="steps">
+      <li>${t('Create a free account at {site}, then {path} and add {domain}.', { site: '<b>resend.com</b>', path: '<b>Domains → Add domain</b>', domain: '<b dir="ltr">allure-boutique.org</b>' })}</li>
+      <li>${t('Resend shows 3 DNS records. Add each one in GoDaddy → DNS → Add New Record, then press Verify in Resend.')}</li>
+      <li>${t('In Resend → API Keys → Create API key (permission: Sending access). Copy it.')}</li>
+      <li>${t('In Supabase → {sql}, run (with your key):', { sql: '<b>SQL Editor</b>' })}<div class="code">select vault.create_secret('re_YOUR_KEY', 'resend_api_key');</div></li>
+      <li>${t('In Settings → Emails to customers, set the sender address (e.g. orders@allure-boutique.org — no mailbox needed) and your Gmail as “Replies go to”.')}</li>
+      <li>${t('Come back here and send a test email.')}</li>
+    </ol></div>`;
+}
+
+
 // ───────────────────────── login / router ─────────────────────────
 function viewLogin(denied) {
   const l = A.ui.login;
@@ -715,6 +1088,9 @@ function route() {
   const [a, b] = (location.hash.replace(/^#\/?/, '') || 'overview').split('/').map(decodeURIComponent);
   switch (a) {
     case 'insights': return ['insights', viewInsights()];
+    case 'customers': return ['customers', viewCustomers(b)];
+    case 'pages': return ['pages', viewPages(b)];
+    case 'export': return ['export', viewExport()];
     case 'orders': return ['orders', viewOrders(b)];
     case 'products': return ['products', b ? viewProductEdit(b) : viewProducts()];
     case 'reviews': return ['reviews', viewReviews(b)];
@@ -737,6 +1113,7 @@ function render() {
   root.innerHTML = shell(page, body);
   if (page === 'overview') drawChart();
   if (page === 'insights') drawInsightsChart();
+  if (page === 'customers') drawCustomerChart();
   if (page === 'orders' && unseen()) markSeen();
   if (changed) { window.scrollTo(0, 0); lastHash = location.hash; } else {
     window.scrollTo(0, y);
@@ -765,7 +1142,50 @@ const ACT = {
   cancelNo: () => { A.ui.cancelConfirm = false; renderDrawer(); },
   setPay: el => patchOrder({ payment_status: el.dataset.v }, el.dataset.v === 'confirmed' ? t('Payment marked as received') : t('Payment marked as not received')),
   saveNote: () => patchOrder({ admin_note: $('#adminNote').value }, t('Note saved')),
+  // order management
+  oform: el => { const o = A.orders.find(x => x.order_no === A.ui.open); if (!o) return; const f = el.dataset.f || null; if (f && A.ui.oform === f) A.ui.oform = null; else if (f) startOrderForm(o, f); else A.ui.oform = null; renderDrawer(); },
+  oeAdd: () => { const p = A.products.find(x => x.active && x.stock > 0) || A.products[0]; if (!p) return; A.ui.oedit.items.push({ id: p.id, qty: 1, unit: p.price, opts: {} }); renderDrawer(); },
+  oeRm: el => { A.ui.oedit.items.splice(+el.dataset.i, 1); renderDrawer(); },
+  doEdit: async () => {
+    const o = A.orders.find(x => x.order_no === A.ui.open), d = A.ui.oedit, mode = A.ui.oform;
+    if (!d.items.length) return toast(t('An order needs at least one piece.'));
+    if (mode === 'exchange' && !d.note.trim()) return toast(t('Please describe the exchange.'));
+    const payload = { mode, note: d.note, customer: d.customer, fulfil: d.fulfil, city: d.city, address: d.address,
+      delivery_fee: Math.round(+d.delivery_fee || 0), discount: Math.round(+d.discount || 0),
+      items: d.items.map(i => ({ id: i.id, qty: Math.max(1, Math.round(+i.qty || 1)), unit: Math.max(0, Math.round(+i.unit || 0)), opts: i.opts, name: i.name, code: i.code })) };
+    try { const row = await API.admin.editOrder(o.id, payload); A.orders[A.orders.findIndex(x => x.id === o.id)] = row; A.ui.oform = null; A.products = await API.admin.products(); await loadCustomers();
+      toast(mode === 'exchange' ? t('Exchange saved') : t('Order updated')); render(); renderDrawer(); }
+    catch (e) { toast(API.errMessage(e)); }
+  },
+  doRefund: async () => {
+    const o = A.orders.find(x => x.order_no === A.ui.open);
+    const amount = Math.round(+$('#rf-amount').value || 0), restock = $('#rf-restock').checked && !$('#rf-restock').disabled, note = $('#rf-note').value;
+    try { const row = await API.admin.refundOrder(o.id, amount, restock, note); A.orders[A.orders.findIndex(x => x.id === o.id)] = row; A.ui.oform = null; A.products = await API.admin.products(); await loadCustomers();
+      toast(t('Return / refund recorded')); render(); renderDrawer(); }
+    catch (e) { toast(API.errMessage(e)); }
+  },
+  doDelete: async () => {
+    const o = A.orders.find(x => x.order_no === A.ui.open);
+    const restock = $('#del-restock').checked && !$('#del-restock').disabled;
+    try { await API.admin.deleteOrder(o.id, restock); A.orders = A.orders.filter(x => x.id !== o.id); A.products = await API.admin.products(); await loadCustomers();
+      closeAll(); toast(t('Order {no} deleted', { no: o.order_no })); render(); }
+    catch (e) { toast(API.errMessage(e)); }
+  },
+  // customers
+  openCust: el => openCustomer(el.dataset.k),
+  blockAcc: async el => { try { await API.admin.updateCustomer(el.dataset.id, { blocked: true, blocked_reason: ($('#cb-reason') || {}).value || '' }); await loadCustomers(); toast(t('Customer blocked')); render(); renderCustomer(); } catch (e) { toast(API.errMessage(e)); } },
+  unblockAcc: async el => { try { await API.admin.updateCustomer(el.dataset.id, { blocked: false }); await loadCustomers(); toast(t('Customer unblocked')); render(); if (A.ui.cust) renderCustomer(); } catch (e) { toast(API.errMessage(e)); } },
+  blockGuest: async el => { try { await API.admin.blockPhone(el.dataset.id, true, ($('#cb-reason') || {}).value || ''); await loadCustomers(); toast(t('Phone number blocked')); render(); renderCustomer(); } catch (e) { toast(API.errMessage(e)); } },
+  unblockPhone: async el => { try { await API.admin.blockPhone(el.dataset.p, false); await loadCustomers(); toast(t('Phone number unblocked')); render(); if (A.ui.cust) renderCustomer(); } catch (e) { toast(API.errMessage(e)); } },
+  // pages
+  pageDefault: el => { const l = el.dataset.l, slug = A.ui.pslug; A.settings.pages[slug][l] = PAGES.defaults(l)[slug]; render(); },
+  savePages: async () => { try { await API.admin.saveSettings(A.settings); A.ui.pMsg = t('Saved — the pages are updated.'); A.ui.pOk = true; } catch (e) { A.ui.pMsg = API.errMessage(e); A.ui.pOk = false; } render(); },
+  // export
+  exPreset: el => { exportPreset(el.dataset.k); render(); },
+  doExport,
   // product editor
+  imgCrop: async el => { const ed = A.ui.edit, i = +el.dataset.i; try { const url = await cropAndUpload(ed.images[i], PRODUCT_CROP(), ed._new ? slug(ed.name || 'new') : ed.id); if (url) { ed.images[i] = url; render(); } } catch (e) { toast(t('Upload failed: {msg}', { msg: API.errMessage(e) })); } },
+  chartRm: () => { A.ui.edit.sizeChart = ''; render(); },
   addColor: () => { A.ui.edit._colors.push({ name: '', ar: '', hex: '#d4a62a' }); render(); },
   rmColor: el => { A.ui.edit._colors.splice(+el.dataset.i, 1); render(); },
   addPart: () => { A.ui.edit._parts.push({ name: '', ar: '', price: '' }); render(); },
@@ -805,6 +1225,33 @@ const ACT = {
 };
 
 const FORMS = {
+  custEdit: async () => {
+    const id = A.ui.cust.slice(2);
+    try { await API.admin.updateCustomer(id, { name: $('#ce-name').value, phone: $('#ce-phone').value }); await loadCustomers(); toast(t('Customer saved')); render(); renderCustomer(); }
+    catch (e) { toast(API.errMessage(e)); }
+  },
+  blockPhone: async () => {
+    const ph = $('#bp-phone').value.replace(/\s/g, '');
+    if (!/^01[0125]\d{8}$/.test(ph)) return toast(t('Please enter a valid mobile number.'));
+    try { await API.admin.blockPhone(ph, true, $('#bp-reason').value); await loadCustomers(); toast(t('Phone number blocked')); render(); } catch (e) { toast(API.errMessage(e)); }
+  },
+  testEmail: async () => {
+    const to = $('#te-to').value.trim(); A.ui.teTo = to;
+    if (!/^\S+@\S+\.\S+$/.test(to)) return toast(t('Please enter a valid email.'));
+    try {
+      const id = await API.admin.testEmail(to);
+      if (!id) { A.ui.esMsg = `<span class="bad">${t('Resend key missing.')}</span>`; return render(); }
+      A.ui.esMsg = t('Sending…'); render();
+      setTimeout(async () => {
+        try { const r = await API.admin.httpResult(id);
+          if (r && r.status_code === 200) A.ui.esMsg = `<span class="ok">✓ ${t('Sent — check the inbox (and spam folder) of {to}.', { to: esc(to) })}</span>`;
+          else if (r) { let d = ''; try { d = JSON.parse(r.content).message; } catch (e) { d = r.error || r.content; } A.ui.esMsg = `<span class="bad">${t('Resend said: {msg}', { msg: esc(d || 'error ' + r.status_code) })}</span>`; }
+          else A.ui.esMsg = t('Sent — check the inbox (and spam folder) of {to}.', { to: esc(to) });
+        } catch (e) { A.ui.esMsg = t('Sent — check the inbox (and spam folder) of {to}.', { to: esc(to) }); }
+        render();
+      }, 3000);
+    } catch (e) { A.ui.esMsg = `<span class="bad">${esc(API.errMessage(e))}</span>`; render(); }
+  },
   login: async () => {
     const l = A.ui.login; l.email = $('#lg-email').value.trim(); const pw = $('#lg-pw').value;
     l.busy = true; l.msg = ''; render();
@@ -861,6 +1308,30 @@ document.addEventListener('input', e => {
   if (el.id === 'oq') { A.ui.oq = el.value; render(); return; }
   if (el.id === 'pq') { A.ui.pq = el.value; render(); return; }
   if (el.id === 'pcat') { A.ui.pcat = el.value; render(); return; }
+  if (el.id === 'cq') { A.ui.cq = el.value; render(); return; }
+  if (ds.page) { const pg = A.settings.pages[A.ui.pslug]; pg[ds.page] = el.value; const pv = document.getElementById('prev-' + ds.page); if (pv) pv.innerHTML = PAGES.render(el.value || PAGES.defaults(ds.page)[A.ui.pslug]); return; }
+  if (el.id === 'ex-from') { A.ui.exFrom = el.value; return; }
+  if (el.id === 'ex-to') { A.ui.exTo = el.value; return; }
+  if (ds.sheet) { A.ui.exSheets[ds.sheet] = el.checked; return; }
+  if (A.ui.oedit && (ds.oe || ds.oi != null || ds.op != null)) {
+    const d = A.ui.oedit;
+    if (ds.oe) { const [a, b] = ds.oe.split('.'); if (b) d[a][b] = el.value; else d[a] = el.value; }
+    // switching to pickup or changing the city refills the delivery fee (it can still be typed over)
+    if (ds.oe === 'fulfil' || ds.oe === 'city') {
+      const c = (A.settings.delivery || []).find(x => x.city === d.city);
+      d.delivery_fee = d.fulfil === 'pickup' ? 0 : c ? c.fee : d.delivery_fee;
+      const f = document.querySelector('[data-oe="delivery_fee"]'); if (f) f.value = d.delivery_fee;
+    }
+    if (ds.oi != null) {
+      const it = d.items[+ds.oi];
+      if (ds.k === 'id') { const p = A.products.find(x => x.id === el.value); Object.assign(it, { id: el.value, unit: p ? p.price : it.unit, opts: {}, name: p && p.name, code: p && p.code }); renderDrawer(); return; }
+      if (ds.k === 'qty' || ds.k === 'unit') it[ds.k] = el.value; else { if (el.value) it.opts[ds.k] = el.value; else delete it.opts[ds.k]; }
+    }
+    if (ds.op != null) { const it = d.items[+ds.op]; const parts = new Set(it.opts.parts || []); el.checked ? parts.add(el.value) : parts.delete(el.value); it.opts.parts = [...parts]; if (!it.opts.parts.length) delete it.opts.parts; }
+    const sub = d.items.reduce((a, i) => a + (+i.unit || 0) * (+i.qty || 0), 0), tot = $('#oeTotal');
+    if (tot) tot.textContent = money(Math.max(0, sub - (+d.discount || 0) + (+d.delivery_fee || 0)));
+    return;
+  }
   if (ed && ds.pe) { ed[ds.pe] = el.type === 'checkbox' ? el.checked : el.value; if (ds.pe === 'cat') { ed.sub = ''; const c = (A.settings.categories || []).find(x => x.name === el.value); if (c && c.bg && ed._new) ed.bg = c.bg; } if (ds.rerender) render(); return; }
   if (ed && ds.flag) { ed.flags = { ...ed.flags, [ds.flag]: el.checked }; return; }
   if (ed && ds.color != null) { ed._colors[+ds.color][ds.k] = el.value; return; }
@@ -886,20 +1357,27 @@ document.addEventListener('input', e => {
 document.addEventListener('change', async e => {
   const el = e.target;
   if (el.id === 'banner-file' && el.files.length) {
-    A.ui.bannerUp = true; render();
+    const f = el.files[0]; el.value = '';
     try {
-      const url = await API.admin.uploadImage(await shrink(el.files[0], 2400), 'banners');
-      A.settings.promo = { ...(A.settings.promo || {}), image: url };
-      sMsg(t('Image uploaded — press Save settings to publish it.'), true);
+      A.ui.bannerUp = true; render();
+      const url = await cropAndUpload(f, BANNER_CROP(), 'banners');
+      if (url) { A.settings.promo = { ...(A.settings.promo || {}), image: url }; sMsg(t('Image uploaded — press Save settings to publish it.'), true); }
     } catch (x) { sMsg(t('Upload failed: {msg}', { msg: API.errMessage(x) })); }
     A.ui.bannerUp = false; render(); return;
+  }
+  if (el.id === 'pe-chart' && el.files.length) {
+    const ed = A.ui.edit, f = el.files[0]; el.value = '';
+    try { A.ui.chartUp = true; render(); const url = await cropAndUpload(f, CHART_CROP(), (ed._new ? slug(ed.name || 'new') : ed.id) + '/size-chart'); if (url) ed.sizeChart = url; }
+    catch (x) { toast(t('Upload failed: {msg}', { msg: API.errMessage(x) })); }
+    A.ui.chartUp = false; render(); return;
   }
   if (el.id === 'pe-files' && el.files.length) {
     const ed = A.ui.edit; const files = [...el.files];
     const pid = ed._new ? slug(ed.name || 'new') + '-' + slug(ed.code || Date.now()) : ed.id;
     A.ui.uploading = true; render();
+    el.value = '';
     for (const f of files) {
-      try { ed.images.push(await API.admin.uploadImage(await shrink(f), pid)); }
+      try { const url = await cropAndUpload(f, PRODUCT_CROP(), pid); if (url) { ed.images.push(url); render(); } }
       catch (x) { toast(t('Upload failed: {msg}', { msg: API.errMessage(x) })); }
     }
     A.ui.uploading = false; render();
@@ -907,7 +1385,7 @@ document.addEventListener('change', async e => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
 window.addEventListener('hashchange', () => { if (A.phase === 'app') render(); });
-let rT; window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { if (A.phase === 'app' && $('#revChart')) drawChart(); if (A.phase === 'app' && $('#insChart')) drawInsightsChart(); }, 150); });
+let rT; window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { if (A.phase === 'app' && $('#revChart')) drawChart(); if (A.phase === 'app' && $('#insChart')) drawInsightsChart(); if (A.phase === 'app' && $('#custChart')) drawCustomerChart(); }, 150); });
 
 // ───────────────────────── boot ─────────────────────────
 let channel = null, presence = null;
@@ -933,6 +1411,7 @@ async function onSession(session) {
     }).subscribe();
   }
   API.admin.telegramStatus().then(s => { A.ui.tg = s; if (/notifications/.test(location.hash)) render(); }).catch(() => {});
+  API.admin.emailStatus().then(s => { A.ui.es = s; if (/notifications/.test(location.hash)) render(); }).catch(() => {});
   updateTitle(); render();
 }
 function boot() {

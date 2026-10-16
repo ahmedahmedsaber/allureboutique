@@ -7,3 +7,5 @@ uploads
 supabase
 tools
 *.md
+tests
+emails

@@ -18,9 +18,9 @@ window.STORE = {
   instapay: '0100 111 1111',         // shown in the InstaPay / VC payment note
   phone: '+20 100 111 1111',
   email: 'hello@allureboutique.com',
-  address: 'Value 2 Mall, New Cairo, Cairo',
+  address: 'Value Mall, New Cairo, Cairo',
   hours: 'Daily · 12:00 PM – 11:00 PM',
-  mapsUrl: 'https://maps.google.com/?q=Value+2+Mall+New+Cairo',
+  mapsUrl: 'https://maps.google.com/?q=Value+Mall+New+Cairo',
   socials: {
     facebook: 'https://facebook.com/',
     instagram: 'https://instagram.com/',
@@ -163,6 +163,6 @@ window.SEED_REVIEWS = [
   { name:'Nour H.',   rating:5, text:'The quality is so nice — it will not be the last time I order from ALLURE.', date:'2026-09-02' },
   { name:'Mariam A.', rating:5, text:'My Mayfair tote arrived beautifully wrapped. Even better in person.', date:'2026-08-21' },
   { name:'Salma K.',  rating:4, text:'Lovely initial necklace and very quick delivery to New Cairo.', date:'2026-08-14' },
-  { name:'Yasmin F.', rating:5, text:'The most beautiful accessories I have ever owned. The staff at Value 2 Mall are wonderful.', date:'2026-07-30' },
+  { name:'Yasmin F.', rating:5, text:'The most beautiful accessories I have ever owned. The staff at Value Mall are wonderful.', date:'2026-07-30' },
   { name:'Habiba R.', rating:5, text:'Bought the Soleil set as a gift — she wears it every single day.', date:'2026-07-11' },
 ];

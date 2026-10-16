@@ -331,7 +331,7 @@ function renderFooter() {
       ${col(t('HOUSE'), [[t('About Us'), '#/page/about'], [t('Contact Us'), '#/page/contact']])}
       ${col(t('HELP'), [[t('Terms of Service'), '#/page/terms'], [t('Visit Us'), '#/page/location'], [t('Track an Order'), '#/track']])}
     </div>
-    <div class="ftr-bottom"><div>${t('© {year} ALLURE Boutique. All rights reserved.', { year: new Date().getFullYear() })}</div><div>${t('VALUE 2 MALL · NEW CAIRO')}</div></div>`;
+    <div class="ftr-bottom"><div>${t('© {year} ALLURE Boutique. All rights reserved.', { year: new Date().getFullYear() })}</div><div>${t('VALUE MALL · NEW CAIRO')}</div></div>`;
 }
 
 // ───────────────────────── views ─────────────────────────
@@ -354,14 +354,14 @@ function viewHome() {
     </section>` : `<section class="hero">
       <div class="hero-bg"></div><div class="hero-shade"></div>
       <div class="wrap"><div class="hero-content">
-        <div class="hero-kicker">${t('NEW CAIRO · VALUE 2 MALL')}</div>
+        <div class="hero-kicker">${t('NEW CAIRO · VALUE MALL')}</div>
         <h1 class="hero-h1">${t('Be different,')}<br><em>${t('anytime anywhere.')}</em></h1>
         <p class="hero-p">${t('A curated house of bags, sunglasses, fine jewelry and watches — every piece handpicked, every detail authentic.')}</p>
         <div class="hero-btns"><button class="btn btn-gold" data-act="go" data-href="#/shop/all">${t('SHOP THE COLLECTION')} ${arrow()}</button>
         <button class="btn hero-ghost" data-act="go" data-href="#/page/about">${t('OUR STORY')}</button></div>
       </div></div></section>`;
 
-  const marq = ['Authenticated Luxury', 'New Cairo · Value 2 Mall', 'Complimentary Gift Wrap', 'Free Pickup from Our Branch', 'Handpicked Daily', 'Lifetime Authenticity']
+  const marq = ['Authenticated Luxury', 'New Cairo · Value Mall', 'Complimentary Gift Wrap', 'Free Pickup from Our Branch', 'Handpicked Daily', 'Lifetime Authenticity']
     .map(m => `<span class="marquee-item"><span>${t(m)}</span><i>✦</i></span>`).join('');
 
   const cats = CATEGORIES.map(c => {
@@ -401,6 +401,7 @@ function viewHome() {
     </div></section>
     ${REVIEWS.length ? `<section class="sec" id="reviews" style="padding-bottom:96px">
       ${secHead(t('FROM OUR CLIENTS'), t('Reviews'))}
+      ${S.summary && S.summary.count && (STORE.reviews || {}).showSummary !== false ? `<div class="rev-summary"><span class="avg">${Number(S.summary.average).toFixed(1)}</span><span class="st">${stars(S.summary.average)}</span><span class="muted">${n1(S.summary.count, '{n} review', '{n} reviews')}</span></div>` : ''}
       ${carousel('revTrack', reviewCards, 'three')}
     </section>` : '<div id="reviews"></div>'}`;
 }
@@ -570,6 +571,7 @@ function viewProduct(id) {
           ${spec(t('Color'), esc(pColor(p) || '—'))}${spec(t('Availability'), p.inStock ? (lowStock ? t('Only {n} left', { n: p.stock }) : t('In stock')) : t('Out of stock'))}
           ${comes.length ? spec(t('Comes with'), comes.map(esc).join(' · '), 'full lastrow') : ''}
         </div>
+        ${p.sizeChart ? `<button class="link-btn size-btn" data-act="sizeChart" data-id="${p.id}">📏 ${t('SIZE CHART')}</button>` : ''}
         ${opts}
         <div class="opt"><div class="opt-h"><span>${t('QUANTITY')}</span></div>
           <div class="qty"><button data-act="qty" data-d="-1" aria-label="${t('Decrease')}">−</button><span>${st.qty}</span><button data-act="qty" data-d="1" aria-label="${t('Increase')}">+</button></div></div>
@@ -579,7 +581,7 @@ function viewProduct(id) {
           <button class="btn btn-line" data-act="buyNow"${p.inStock ? '' : ' disabled'}>${t('CHECKOUT')}</button>
           <button class="fav-big${fav ? ' on' : ''}" data-act="fav" data-id="${p.id}" aria-label="${t('Favourite')}">${icon('heart')}</button>
         </div>
-        <div class="perks"><div>✓ ${t('Complimentary gift wrap')}</div><div>✓ ${t('Pickup from Value 2 Mall')}</div><div>✓ ${t('Lifetime authenticity')}</div></div>
+        <div class="perks"><div>✓ ${t('Complimentary gift wrap')}</div><div>✓ ${t('Pickup from Value Mall')}</div><div>✓ ${t('Lifetime authenticity')}</div></div>
       </div>
     </section>
     ${rel.length ? `<section class="sec" style="padding-top:0;padding-bottom:96px">
@@ -734,7 +736,7 @@ async function placeOrder() {
     customer: { name: f.name.trim(), email: f.email.trim(), phone: f.phone.replace(/\s/g, ''), phone2: (f.phone2 || '').replace(/\s/g, '') },
     fulfil: c.fulfil, city: c.fulfil === 'delivery' ? f.city : null,
     address: { region: f.region, street: f.street, building: f.building, apartment: f.apartment },
-    note: f.note || '', payment: c.pay, promo: S.promo ? S.promo.code : null,
+    note: f.note || '', payment: c.pay, promo: S.promo ? S.promo.code : null, lang: I18N.lang,
     items: S.cart.map(l => ({ id: l.id, qty: l.qty, opts: l.opts })),
   };
   c.busy = true; c.msg = ''; render();
@@ -762,7 +764,8 @@ function paymentNote(o) {
     : t('Please send the delivery fees ({amount}) to {number} on InstaPay or Vodafone Cash, then send a screenshot in our WhatsApp chat to confirm your order. The rest is paid on delivery.', { amount: `<b>${money(amount)}</b>`, number: `<b>${esc(STORE.instapay)}</b>` });
   const wa = t('Hello ALLURE, I placed order {no} ({total}). Here is my payment screenshot:', { no: o.order_no, total: money(o.total) });
   return `<div class="notice">${msg}
-    <div><a class="btn btn-gold wa" href="${waLink(wa)}" target="_blank" rel="noopener">${icon('whatsapp')} ${t('OPEN WHATSAPP CHAT')}</a></div></div>`;
+    <div class="notice-btns">${STORE.instapayLink ? `<a class="btn btn-ink wa" href="${esc(STORE.instapayLink)}" target="_blank" rel="noopener">${t('PAY WITH INSTAPAY LINK')}</a>` : ''}
+    <a class="btn btn-gold wa" href="${waLink(wa)}" target="_blank" rel="noopener">${icon('whatsapp')} ${t('OPEN WHATSAPP CHAT')}</a></div></div>`;
 }
 function viewOrderPlaced(no) {
   const o = S.receipts.find(x => x.order_no === no) || S.orders.find(x => x.order_no === no);
@@ -773,6 +776,7 @@ function viewOrderPlaced(no) {
     <div class="eyebrow">${t('ORDER {no}', { no: esc(o.order_no) })}</div>
     <h1 class="page-h1" style="margin-top:12px">${name ? t('Thank you, {name}.', { name: esc(name) }) : t('Thank you.')}</h1>
     <p class="page-sub">${t('Your order is {status} until we confirm it. Keep your order number {no} to track it.', { status: `<b style="color:var(--gold)">${t('Pending')}</b>`, no: `<b>${esc(o.order_no)}</b>` })}</p>
+    <div class="shot-note"><span class="shot-ico">📸</span><div><b>${t('Please take a screenshot of this page.')}</b><br>${t('You’ll need your order number {no} to track your order or when you contact us.', { no: `<b class="ord-no">${esc(o.order_no)}</b>` })}${o.customer && o.customer.email ? '<br>' + t('We’ve also emailed the details to {email}.', { email: esc(o.customer.email) }) : ''}</div></div>
     ${paymentNote(o)}
     <div class="summary" style="text-align:start">
       ${(o.items || []).map(i => { const ot = optText(i.opts, i.id); return `<div class="row"><span>${i.qty} × ${esc(itemName(i))}${ot.length ? ` <span style="font-size:11px">(${ot.map(esc).join(isAr() ? '، ' : ', ')})</span>` : ''}</span><b>${money(i.unit * i.qty)}</b></div>`; }).join('')}
@@ -788,10 +792,13 @@ function viewOrderPlaced(no) {
 }
 
 // tracking ---------------------------------------------------------------------
-const STATUS_LBL = { cart: 'My Cart', pending: 'Pending', shipped: 'Shipped', received: 'Received', cancelled: 'Cancelled' };
+const STATUS_LBL = { cart: 'My Cart', pending: 'Pending', shipped: 'Shipped', received: 'Received', cancelled: 'Cancelled', refunded: 'Returned / refunded', exchanged: 'Exchanged' };
 const statusPill = s => `<span class="status ${s}">${t(STATUS_LBL[s] || s)}</span>`;
 function timeline(o) {
-  const steps = o.status === 'cancelled' ? ['cart', 'pending', 'cancelled'] : ['cart', 'pending', 'shipped', 'received'];
+  const h0 = o.history || {};
+  const steps = o.status === 'cancelled' ? ['cart', 'pending', 'cancelled']
+    : (o.status === 'refunded' || o.status === 'exchanged') ? ['cart', 'pending', ...['shipped', 'received'].filter(k => h0[k]), o.status]
+    : ['cart', 'pending', 'shipped', 'received'];
   const cur = steps.indexOf(o.status);
   const h = o.history || {};
   return `<ul class="timeline">${steps.map((k, i) => {
@@ -867,7 +874,7 @@ function viewAccount(tab) {
   if (!u) return viewAuth();
   const tb = S.ui.acctTab;
   const ongoing = S.orders.filter(o => o.status === 'pending' || o.status === 'shipped');
-  const prev = S.orders.filter(o => o.status === 'received' || o.status === 'cancelled');
+  const prev = S.orders.filter(o => !['pending', 'shipped'].includes(o.status));
   const p = S.ui.profile || (S.ui.profile = { name: u.name, phone: u.phone });
   const body = tb === 'orders' ? `
       <div class="grp-h">${t('ONGOING ORDERS')} <span>${ongoing.length}</span></div>
@@ -906,6 +913,14 @@ function viewReset() {
 }
 
 // content pages ---------------------------------------------------------------------
+// Policy pages: the owner's text from Dashboard → Pages for this language, otherwise the standard text.
+function pageText(slug) {
+  const custom = ((STORE.pages || {})[slug] || {})[I18N.lang];
+  const src = custom && custom.trim() ? custom : PAGES.defaults(I18N.lang)[slug];
+  const fees = deliveries().map(d => `- ${cityName(d.city)}: ${money(d.fee)}`)
+    .concat(`- ${t('Pickup from our branch ({address}): free', { address: sAddress() })}`).join('\n');
+  return PAGES.render(src.replace('{delivery_fees}', fees).replace(/\{address\}/g, sAddress()));
+}
 function viewPage(slugName) {
   const so = STORE.socials || {};
   const socials = `${so.facebook ? `<a href="${esc(so.facebook)}" target="_blank" rel="noopener" aria-label="Facebook">${icon('facebook')}</a>` : ''}${so.instagram ? `<a href="${esc(so.instagram)}" target="_blank" rel="noopener" aria-label="Instagram">${icon('instagram')}</a>` : ''}${so.tiktok ? `<a href="${esc(so.tiktok)}" target="_blank" rel="noopener" aria-label="TikTok">${icon('tiktok')}</a>` : ''}`;
@@ -935,19 +950,9 @@ function viewPage(slugName) {
         <div class="info-card"><div class="k">${t('OPENING HOURS')}</div><div class="v">${esc(sHours())}</div></div>
         <div class="info-card"><div class="k">${t('DIRECTIONS')}</div><div class="v">${STORE.mapsUrl ? `<a href="${esc(STORE.mapsUrl)}" target="_blank" rel="noopener" style="color:var(--gold)">${t('Open in Google Maps')} ↗</a>` : '—'}</div></div>
       </div><p style="margin-top:30px">${t('You can also choose {opt} at checkout and collect your order from the boutique at no delivery cost.', { opt: `<b>${t('Receive from our branch')}</b>` })}</p></section>`,
-    policy: () => `${pageHead([home, [t('Our Policy'), null]], t('Our Policy'))}
-      <section class="prose"><h2>${t('Authenticity')}</h2><p>${t('Every piece sold by ALLURE Boutique is inspected before it reaches you.')}</p>
-      <h2>${t('Exchanges & returns')}</h2><ul><li>${t('Exchanges are accepted within 14 days of receiving your order, provided the item is unworn and in its original packaging.')}</li><li>${t('Earrings and personalised pieces (such as initial necklaces) cannot be exchanged for hygiene and personalisation reasons.')}</li><li>${t('Sale items can be exchanged but not refunded.')}</li></ul>
-      <h2>${t('Orders')}</h2><p>${t('Orders stay Pending until we confirm them. Orders paid by InstaPay or Vodafone Cash are confirmed once we receive your payment screenshot on WhatsApp.')}</p></section>`,
-    shipping: () => `${pageHead([home, [t('Shipping Policy'), null]], t('Shipping Policy'))}
-      <section class="prose"><h2>${t('Delivery fees')}</h2><ul>${deliveries().map(d => `<li>${esc(cityName(d.city))}: ${money(d.fee)}</li>`).join('')}<li>${t('Pickup from our branch ({address}): free', { address: esc(sAddress()) })}</li></ul>
-      <h2>${t('Delivery time')}</h2><p>${t('Cairo and Giza orders usually arrive within 2–3 working days; other governorates within 3–5 working days.')}</p>
-      <h2>${t('Cash on delivery')}</h2><p>${t('For cash-on-delivery orders, the delivery fees are paid in advance via InstaPay or Vodafone Cash to confirm the order.')}</p></section>`,
-    terms: () => `${pageHead([home, [t('Terms of Service'), null]], t('Terms of Service'))}
-      <section class="prose"><p>${t('By placing an order with ALLURE Boutique you agree to the following terms.')}</p>
-      <h2>${t('Prices & payment')}</h2><p>${t('Prices are shown in Egyptian pounds (LE). We accept InstaPay / Vodafone Cash transfers and cash on delivery.')}</p>
-      <h2>${t('Availability')}</h2><p>${t('Pieces are handpicked and often limited. If an item becomes unavailable after you order, we will contact you to offer an alternative or a refund.')}</p>
-      <h2>${t('Accounts & reviews')}</h2><p>${t('You need to be signed in to submit feedback. Reviews are published after approval; we may remove reviews that are offensive or unrelated to our products.')}</p></section>`,
+    policy: () => `${pageHead([home, [t('Our Policy'), null]], t('Our Policy'))}<section class="prose">${pageText('policy')}</section>`,
+    shipping: () => `${pageHead([home, [t('Shipping Policy'), null]], t('Shipping Policy'))}<section class="prose">${pageText('shipping')}</section>`,
+    terms: () => `${pageHead([home, [t('Terms of Service'), null]], t('Terms of Service'))}<section class="prose">${pageText('terms')}</section>`,
   };
   return (P[slugName] || viewNotFound)();
 }
@@ -1005,6 +1010,20 @@ function closeDrawers() {
   S.ui.menu = false; S.ui.filterOpen = false;
   $('#menu').classList.remove('open'); $('#filters').classList.remove('open'); $('#scrim').classList.remove('open');
 }
+function renderWhatsApp() {
+  const el = $('#waFloat'); if (!el) return;
+  if (!STORE.whatsapp || isOwner()) { el.hidden = true; return; }
+  el.href = waLink(t('Hello ALLURE, I have a question.'));
+  el.setAttribute('aria-label', t('Chat with us on WhatsApp'));
+  el.title = t('Chat with us on WhatsApp');
+  el.innerHTML = icon('whatsapp');
+  el.hidden = false;
+}
+function lightbox(src, title) {
+  const el = $('#lightbox');
+  el.innerHTML = `<div class="lb-box" role="dialog" aria-label="${esc(title)}"><div class="lb-head"><span>${esc(title)}</span><button class="icon-btn" data-act="lbClose" aria-label="${t('Close')}">${icon('close')}</button></div><img src="${esc(src)}" alt="${esc(title)}"></div>`;
+  el.hidden = false;
+}
 function setTitle() { document.title = t('ALLURE Boutique — Be different, anytime anywhere'); }
 
 // ───────────────────────── data loading ─────────────────────────
@@ -1025,14 +1044,17 @@ async function onSession(session) {
     try { S.user = await API.profile(); } catch (e) { S.user = null; }
     if (S.user && !S.user.email) S.user.email = session.user.email;
     if (isOwner() && !PREVIEW) { toDashboard(); return; }
-    if (!isOwner()) await loadOrders();
+    if (!isOwner()) {
+      try { const n = await API.linkMyOrders(); if (n > 0) toast(n1(n, 'We found {n} earlier order and added it to your account.', 'We found {n} earlier orders and added them to your account.')); } catch (e) { /* older database: skip */ }
+      await loadOrders();
+    }
     if (!orderChannel) orderChannel = API.subscribeOrders('my-orders', () => loadOrders());
   } else {
     S.user = null; S.orders = []; S.ui.profile = null;
     if (orderChannel) { API.sb.removeChannel(orderChannel); orderChannel = null; }
   }
   setTracking(!isOwner());
-  renderHeader(); renderMenu(); render();
+  renderHeader(); renderMenu(); renderWhatsApp(); render();
 }
 
 // ───────────────────────── events ─────────────────────────
@@ -1056,10 +1078,12 @@ const ACTIONS = {
   lang: () => {
     I18N.set(isAr() ? 'en' : 'ar'); setTitle();
     renderHeader(); renderFooter(); renderMenu(); if (S.ui.filterOpen) renderFilters();
-    lastPath = location.hash; render(); presenceUpdate();
+    lastPath = location.hash; render(); renderWhatsApp(); presenceUpdate();
   },
   car: el => { const tr = document.getElementById(el.dataset.target); if (tr) tr.scrollBy({ left: tr.clientWidth * 0.8 * +el.dataset.dir * (isAr() ? -1 : 1), behavior: 'smooth' }); },
   reload: () => location.reload(),
+  sizeChart: el => { const p = byId(el.dataset.id); if (p && p.sizeChart) lightbox(p.sizeChart, t('Size chart') + ' — ' + pName(p)); },
+  lbClose: () => { $('#lightbox').hidden = true; },
   // listing
   sortToggle: () => { S.ui.sortOpen = !S.ui.sortOpen; render(); },
   sort: el => { S.ui.sort = el.dataset.v; S.ui.sortOpen = false; render(); },
@@ -1217,7 +1241,8 @@ document.addEventListener('input', e => {
     d.cats = el.checked ? [...d.cats, c] : d.cats.filter(x => x !== c); renderFilters();
   }
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeDrawers(); if (S.ui.search) ACTIONS.search(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeDrawers(); $('#lightbox').hidden = true; if (S.ui.search) ACTIONS.search(); } });
+document.addEventListener('click', e => { if (e.target.id === 'lightbox') e.target.hidden = true; });
 window.addEventListener('hashchange', () => {
   closeDrawers();
   if (S.ui.search && !location.hash.startsWith('#/search/')) { S.ui.search = false; S.ui.q = ''; renderHeader(); }
@@ -1240,11 +1265,12 @@ async function boot() {
   setTimeout(() => { if (trackOn === null) setTracking(true); }, 5000);   // never wait forever for the session check
   try {
     applyCatalog(await API.catalog());
+    API.reviewSummary().then(r => { S.summary = r; if (!location.hash || location.hash === '#/' || location.hash === '#/reviews') render(); }).catch(() => {});
     if (S.promo) API.checkPromo(S.promo.code).then(p => { if (!p) { S.promo = null; save('promo'); render(); } }).catch(() => {});
   } catch (e) { S.loadError = API.errMessage(e); }
   S.loading = false;
   if (linkError) { S.ui.auth.msg = decodeURIComponent(linkError.replace(/\+/g, ' ')); location.hash = '#/account'; }
-  renderFooter(); renderMenu(); render();
+  renderFooter(); renderMenu(); renderWhatsApp(); render();
 }
 boot();
 })();

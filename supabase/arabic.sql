@@ -35,7 +35,7 @@ where p.id = v.id;
 
 update public.settings s set data = s.data
   || jsonb_build_object('promo', '{"kicker_ar":"تخفيضات الموسم · لفترة محدودة","small_ar":"خصم","title_ar":"البلاك فرايداي","text_ar":"أكبر تشكيلة في السنة — شنط ومجوهرات ونظارات وساعات مختارة بعناية بخصم يصل إلى النصف.","cta_ar":"تسوقي التخفيضات"}'::jsonb || coalesce(s.data->'promo', '{}'::jsonb))
-  || jsonb_build_object('address_ar', coalesce(nullif(s.data->>'address_ar', ''), 'فاليو 2 مول، القاهرة الجديدة، القاهرة'),
+  || jsonb_build_object('address_ar', coalesce(nullif(s.data->>'address_ar', ''), 'فاليو مول، القاهرة الجديدة، القاهرة'),
                         'hours_ar',   coalesce(nullif(s.data->>'hours_ar', ''), 'يومياً · 12:00 ظهراً – 11:00 مساءً'))
   || jsonb_build_object('categories', (
        select coalesce(jsonb_agg(c || jsonb_build_object(

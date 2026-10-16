@@ -50,12 +50,26 @@ alter table public.products add column if not exists size_ar        text   not n
 alter table public.products add column if not exists color_ar       text   not null default '';
 alter table public.products add column if not exists comes_with_ar  text[] not null default '{}';
 
+-- size chart picture per product (optional)
+alter table public.products add column if not exists size_chart text not null default '';
+
 create table if not exists public.profiles (
   id         uuid primary key references auth.users(id) on delete cascade,
   name       text not null default '',
   phone      text not null default '',
   email      text not null default '',
   role       text not null default 'customer' check (role in ('customer','admin')),
+  created_at timestamptz not null default now()
+);
+
+alter table public.profiles add column if not exists blocked        boolean not null default false;
+alter table public.profiles add column if not exists blocked_reason text not null default '';
+alter table public.profiles add column if not exists blocked_at     timestamptz;
+
+-- phone numbers that may not place orders (guests and accounts alike)
+create table if not exists public.blocked_phones (
+  phone      text primary key,
+  reason     text not null default '',
   created_at timestamptz not null default now()
 );
 
@@ -84,7 +98,16 @@ create table if not exists public.orders (
   created_at     timestamptz not null default now(),
   updated_at     timestamptz not null default now()
 );
+-- order statuses: pending → shipped → received, plus cancelled / refunded (return) / exchanged
+alter table public.orders drop constraint if exists orders_status_check;
+alter table public.orders add constraint orders_status_check
+  check (status in ('pending','shipped','received','cancelled','refunded','exchanged'));
+alter table public.orders add column if not exists lang      text    not null default 'en';    -- customer's shop language (for emails)
+alter table public.orders add column if not exists refunded  int     not null default 0;       -- money returned to the customer
+alter table public.orders add column if not exists restocked boolean not null default false;   -- pieces already put back in stock
+alter table public.orders add column if not exists changes   jsonb   not null default '[]'::jsonb;  -- edit / exchange / refund log
 create index if not exists orders_user_idx    on public.orders(user_id);
+create index if not exists orders_phone_idx   on public.orders((customer->>'phone'));
 create index if not exists orders_created_idx on public.orders(created_at desc);
 
 create table if not exists public.promo_codes (
@@ -148,7 +171,7 @@ drop trigger if exists reviews_set_name on public.reviews;
 create trigger reviews_set_name before insert on public.reviews for each row execute function public.review_set_name();
 
 -- ─────────────────────────────── order status changes ───────────────────────────────
--- Keeps the tracking history and puts stock back when an order is cancelled.
+-- Keeps the tracking history and puts stock back (exactly once) when an order is cancelled.
 create or replace function public.order_before_update()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare it jsonb;
@@ -156,14 +179,17 @@ begin
   new.updated_at := now();
   if new.status is distinct from old.status then
     new.history := coalesce(old.history, '{}'::jsonb) || jsonb_build_object(new.status, now());
-    if new.status = 'cancelled' and old.status <> 'cancelled' then
+    if new.status = 'cancelled' and not old.restocked then
       for it in select * from jsonb_array_elements(old.items) loop
         update public.products set stock = stock + (it->>'qty')::int where id = it->>'id';
       end loop;
-    elsif old.status = 'cancelled' and new.status <> 'cancelled' then
+      new.restocked := true;
+    elsif new.status in ('pending','shipped','received','exchanged') and old.restocked then
+      -- an order brought back from cancelled / returned takes its pieces out of stock again
       for it in select * from jsonb_array_elements(old.items) loop
         update public.products set stock = greatest(stock - (it->>'qty')::int, 0) where id = it->>'id';
       end loop;
+      new.restocked := false;
     end if;
   end if;
   return new;
@@ -220,6 +246,12 @@ begin
   if v_phone !~ '^01[0125][0-9]{8}$' then raise exception 'INVALID:phone'; end if;
   if v_phone2 <> '' and v_phone2 !~ '^01[0125][0-9]{8}$' then raise exception 'INVALID:phone2'; end if;
   if v_pay not in ('cod','instapay') then raise exception 'INVALID:payment'; end if;
+
+  -- blocked customers (account or phone) can't order online
+  if exists (select 1 from public.blocked_phones where phone in (v_phone, nullif(v_phone2, '')))
+     or exists (select 1 from public.profiles where id = auth.uid() and blocked) then
+    raise exception 'BLOCKED';
+  end if;
 
   -- simple flood guard
   if (select count(*) from public.orders where customer->>'phone' = v_phone and created_at > now() - interval '10 minutes') >= 5 then
@@ -313,12 +345,13 @@ begin
                   else 'not_required' end;
 
   insert into public.orders (user_id, customer, fulfil, city, address, note, payment, payment_status,
-                             items, subtotal, discount, promo_code, delivery_fee, total, history)
+                             items, subtotal, discount, promo_code, delivery_fee, total, history, lang)
   values (auth.uid(),
           jsonb_build_object('name', v_name, 'email', v_email, 'phone', v_phone, 'phone2', v_phone2),
           v_fulfil, v_city, v_addr, left(coalesce(payload->>'note', ''), 1000), v_pay, v_pstat,
           items, sub, disc, v_promo, fee, sub - disc + fee,
-          jsonb_build_object('cart', now(), 'pending', now()))
+          jsonb_build_object('cart', now(), 'pending', now()),
+          case when payload->>'lang' = 'ar' then 'ar' else 'en' end)
   returning * into o;
 
   return jsonb_build_object(
@@ -465,7 +498,9 @@ drop policy if exists reviews_insert on public.reviews;
 drop policy if exists reviews_update on public.reviews;
 drop policy if exists reviews_delete on public.reviews;
 create policy reviews_read   on public.reviews for select using (approved or user_id = auth.uid() or public.is_admin());
-create policy reviews_insert on public.reviews for insert to authenticated with check (user_id = auth.uid() and approved = false);
+create policy reviews_insert on public.reviews for insert to authenticated
+  with check (user_id = auth.uid() and approved = false
+              and not exists (select 1 from public.profiles where id = auth.uid() and blocked));
 create policy reviews_update on public.reviews for update using (public.is_admin()) with check (public.is_admin());
 create policy reviews_delete on public.reviews for delete using (public.is_admin());
 
@@ -615,3 +650,351 @@ revoke execute on function public.track_event(jsonb)  from public;
 revoke execute on function public.admin_insights(int) from public, anon;
 grant  execute on function public.track_event(jsonb)  to anon, authenticated;
 grant  execute on function public.admin_insights(int) to authenticated;
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- Owner tools: order edits / exchanges / returns / deletion, customers, blocking,
+-- guest-order linking, review summary, order emails (Resend). Added October 2026.
+-- ════════════════════════════════════════════════════════════════════════════
+
+alter table public.blocked_phones enable row level security;
+drop policy if exists blocked_phones_admin on public.blocked_phones;
+create policy blocked_phones_admin on public.blocked_phones for all using (public.is_admin()) with check (public.is_admin());
+revoke all on public.blocked_phones from anon;
+grant select, insert, update, delete on public.blocked_phones to authenticated;   -- RLS limits this to admins
+
+-- small helper: one order's pieces back into stock (+1) or out of stock (-1)
+create or replace function public.order_stock(p_items jsonb, p_dir int)
+returns void language plpgsql security definer set search_path = public as $$
+declare it jsonb;
+begin
+  for it in select * from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) loop
+    update public.products set stock = greatest(stock + p_dir * (it->>'qty')::int, 0) where id = it->>'id';
+  end loop;
+end $$;
+
+-- Edit an order (items, prices, customer, address, fees) or record an exchange.
+-- p = {mode:'edit'|'exchange', note, customer:{...}, fulfil, city, address, delivery_fee, discount,
+--      items:[{id, qty, unit, opts}]}. Stock follows the change in pieces.
+create or replace function public.admin_edit_order(p_id bigint, p jsonb)
+returns public.orders language plpgsql security definer set search_path = public as $$
+declare
+  o public.orders%rowtype; it jsonb; pr public.products%rowtype;
+  items jsonb := '[]'::jsonb; sub int := 0; d record; mode text := coalesce(p->>'mode', 'edit');
+  old_total int;
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  select * into o from public.orders where id = p_id for update;
+  if not found then raise exception 'NOT_FOUND:order'; end if;
+  old_total := o.total;
+
+  if p ? 'items' then
+    if jsonb_typeof(p->'items') <> 'array' or jsonb_array_length(p->'items') = 0 then raise exception 'EMPTY_CART'; end if;
+    for it in select * from jsonb_array_elements(p->'items') loop
+      if coalesce((it->>'qty')::int, 0) < 1 then raise exception 'INVALID:qty'; end if;
+      if coalesce((it->>'unit')::int, -1) < 0 then raise exception 'INVALID:price'; end if;
+      select * into pr from public.products where id = it->>'id';
+      items := items || jsonb_build_array(jsonb_build_object(
+        'id', it->>'id', 'qty', (it->>'qty')::int, 'unit', (it->>'unit')::int, 'opts', coalesce(it->'opts', '{}'::jsonb),
+        'name', coalesce(pr.name, it->>'name'), 'code', coalesce(pr.code, it->>'code'),
+        'image', coalesce(pr.images[1], it->>'image'), 'bg', coalesce(pr.bg, it->>'bg')));
+      sub := sub + (it->>'unit')::int * (it->>'qty')::int;
+    end loop;
+    -- stock follows the difference in pieces (only while the order still holds stock)
+    if not o.restocked then
+      for d in
+        select k as pid, sum(q) as delta from (
+          select x->>'id' k, (x->>'qty')::int q from jsonb_array_elements(items) x
+          union all
+          select x->>'id', -(x->>'qty')::int from jsonb_array_elements(o.items) x) z
+        group by k having sum(q) <> 0
+      loop
+        if d.delta > 0 and exists (select 1 from public.products where id = d.pid and stock < d.delta) then
+          raise exception 'OUT_OF_STOCK:%', (select name from public.products where id = d.pid);
+        end if;
+        update public.products set stock = greatest(stock - d.delta, 0) where id = d.pid;
+      end loop;
+    end if;
+    o.items := items; o.subtotal := sub;
+  end if;
+
+  if p ? 'customer' then o.customer := o.customer || (p->'customer'); end if;
+  if p ? 'fulfil' and p->>'fulfil' in ('delivery','pickup') then o.fulfil := p->>'fulfil'; end if;
+  if p ? 'city' then o.city := nullif(p->>'city', ''); end if;
+  if p ? 'address' then o.address := coalesce(p->>'address', ''); end if;
+  if p ? 'delivery_fee' then o.delivery_fee := greatest(coalesce((p->>'delivery_fee')::int, 0), 0); end if;
+  if p ? 'discount' then o.discount := greatest(coalesce((p->>'discount')::int, 0), 0); end if;
+  o.total := greatest(o.subtotal - o.discount + o.delivery_fee, 0);
+
+  update public.orders set
+    items = o.items, subtotal = o.subtotal, customer = o.customer, fulfil = o.fulfil, city = o.city, address = o.address,
+    delivery_fee = o.delivery_fee, discount = o.discount, total = o.total,
+    status = case when mode = 'exchange' then 'exchanged' else status end,
+    changes = changes || jsonb_build_array(jsonb_build_object('at', now(), 'type', mode, 'note', coalesce(p->>'note', ''),
+                'total_before', old_total, 'total_after', o.total))
+  where id = p_id returning * into o;
+  return o;
+end $$;
+
+-- Return / refund: money back (full or partial) and, if the pieces came back, return them to stock.
+create or replace function public.admin_refund_order(p_id bigint, p_amount int, p_restock boolean, p_note text default '')
+returns public.orders language plpgsql security definer set search_path = public as $$
+declare o public.orders%rowtype;
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  select * into o from public.orders where id = p_id for update;
+  if not found then raise exception 'NOT_FOUND:order'; end if;
+  if coalesce(p_amount, 0) < 0 or o.refunded + coalesce(p_amount, 0) > o.total then raise exception 'INVALID:amount'; end if;
+  if p_restock and not o.restocked then perform public.order_stock(o.items, 1); end if;
+  update public.orders set
+    refunded = refunded + coalesce(p_amount, 0),
+    restocked = restocked or coalesce(p_restock, false),
+    status = 'refunded',
+    changes = changes || jsonb_build_array(jsonb_build_object('at', now(), 'type', 'refund', 'amount', coalesce(p_amount, 0),
+                'restock', coalesce(p_restock, false), 'note', coalesce(p_note, '')))
+  where id = p_id returning * into o;
+  return o;
+end $$;
+
+-- Permanently remove an order (e.g. a test or spam order). Optionally returns its pieces to stock.
+create or replace function public.admin_delete_order(p_id bigint, p_restock boolean)
+returns text language plpgsql security definer set search_path = public as $$
+declare o public.orders%rowtype;
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  select * into o from public.orders where id = p_id for update;
+  if not found then raise exception 'NOT_FOUND:order'; end if;
+  if p_restock and not o.restocked then perform public.order_stock(o.items, 1); end if;
+  delete from public.orders where id = p_id;
+  return o.order_no;
+end $$;
+
+-- Customers: accounts with their order stats, guest buyers grouped by phone, and blocked numbers.
+create or replace function public.admin_customers()
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  return jsonb_build_object(
+    'accounts', (select coalesce(jsonb_agg(t order by t.last_order desc nulls last, t.created_at desc), '[]'::jsonb) from (
+      select p.id, p.name, p.email, p.phone, p.role, p.blocked, p.blocked_reason, p.blocked_at, p.created_at,
+             count(o.id) as orders,
+             coalesce(sum(o.total - o.refunded) filter (where o.status not in ('cancelled')), 0) as spent,
+             max(o.created_at) as last_order
+      from public.profiles p left join public.orders o on o.user_id = p.id
+      group by p.id) t),
+    'guests', (select coalesce(jsonb_agg(t order by t.last_order desc), '[]'::jsonb) from (
+      select o.customer->>'phone' as phone,
+             (array_agg(o.customer->>'name' order by o.created_at desc))[1] as name,
+             (array_agg(o.customer->>'email' order by o.created_at desc))[1] as email,
+             count(*) as orders,
+             coalesce(sum(o.total - o.refunded) filter (where o.status not in ('cancelled')), 0) as spent,
+             max(o.created_at) as last_order, min(o.created_at) as first_order,
+             bool_or(exists (select 1 from public.blocked_phones b where b.phone = o.customer->>'phone')) as blocked
+      from public.orders o where o.user_id is null group by o.customer->>'phone') t),
+    'blocked_phones', (select coalesce(jsonb_agg(b order by b.created_at desc), '[]'::jsonb) from public.blocked_phones b));
+end $$;
+
+-- Edit a customer account: name, phone, block / unblock (blocking also blocks their phone number).
+create or replace function public.admin_update_customer(p_id uuid, p jsonb)
+returns public.profiles language plpgsql security definer set search_path = public as $$
+declare pr public.profiles%rowtype; was_blocked boolean;
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  select * into pr from public.profiles where id = p_id for update;
+  if not found then raise exception 'NOT_FOUND:customer'; end if;
+  was_blocked := pr.blocked;
+  if (p->>'blocked')::boolean is true and (pr.role = 'admin' or p_id = auth.uid()) then raise exception 'FORBIDDEN'; end if;
+  update public.profiles set
+    name  = coalesce(nullif(trim(p->>'name'), ''), name),
+    phone = coalesce(regexp_replace(p->>'phone', '\s', '', 'g'), phone),
+    blocked = coalesce((p->>'blocked')::boolean, blocked),
+    blocked_reason = case when p ? 'blocked_reason' then coalesce(p->>'blocked_reason', '') else blocked_reason end,
+    blocked_at = case when coalesce((p->>'blocked')::boolean, blocked) and not was_blocked then now()
+                      when not coalesce((p->>'blocked')::boolean, blocked) then null else blocked_at end
+  where id = p_id returning * into pr;
+  if pr.blocked and pr.phone <> '' then
+    insert into public.blocked_phones (phone, reason) values (pr.phone, coalesce(nullif(pr.blocked_reason, ''), 'Account blocked'))
+    on conflict (phone) do update set reason = excluded.reason;
+  elsif was_blocked and not pr.blocked then
+    delete from public.blocked_phones where phone = pr.phone;
+  end if;
+  return pr;
+end $$;
+
+create or replace function public.admin_block_phone(p_phone text, p_blocked boolean, p_reason text default '')
+returns boolean language plpgsql security definer set search_path = public as $$
+declare ph text := regexp_replace(coalesce(p_phone, ''), '\s', '', 'g');
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if ph = '' then raise exception 'INVALID:phone'; end if;
+  if p_blocked then
+    insert into public.blocked_phones (phone, reason) values (ph, coalesce(p_reason, ''))
+    on conflict (phone) do update set reason = excluded.reason;
+  else
+    delete from public.blocked_phones where phone = ph;
+  end if;
+  return p_blocked;
+end $$;
+
+-- After sign-in: attach earlier guest orders placed with the same phone AND the same (confirmed) email.
+create or replace function public.link_my_orders()
+returns int language plpgsql security definer set search_path = public as $$
+declare em text; confirmed timestamptz; ph text; n int;
+begin
+  if auth.uid() is null then return 0; end if;
+  select email, email_confirmed_at into em, confirmed from auth.users where id = auth.uid();
+  if em is null or confirmed is null then return 0; end if;
+  select phone into ph from public.profiles where id = auth.uid();
+  if coalesce(ph, '') = '' then return 0; end if;
+  update public.orders set user_id = auth.uid()
+  where user_id is null and customer->>'phone' = ph and lower(customer->>'email') = lower(em);
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- Average rating and number of approved reviews (for the home page summary).
+create or replace function public.review_summary()
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('average', round(coalesce(avg(rating), 0)::numeric, 1), 'count', count(*))
+  from public.reviews where approved;
+$$;
+
+-- ─────────────────────────────── emails (Resend) ───────────────────────────────
+-- API key lives in Vault as 'resend_api_key' (see SETUP.md). Sender details come from settings.email.
+
+create or replace function public.send_email(p_to text, p_subject text, p_html text)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare key text; s jsonb; sender text; rid bigint;
+begin
+  select decrypted_secret into key from vault.decrypted_secrets where name = 'resend_api_key' limit 1;
+  if key is null or coalesce(p_to, '') = '' then return null; end if;
+  select coalesce(data->'email', '{}'::jsonb) into s from public.settings where id = 1;
+  sender := coalesce(nullif(s->>'fromName', ''), 'ALLURE Boutique') || ' <' || coalesce(nullif(s->>'fromEmail', ''), 'onboarding@resend.dev') || '>';
+  select net.http_post(
+    url     := 'https://api.resend.com/emails',
+    body    := jsonb_strip_nulls(jsonb_build_object('from', sender, 'to', jsonb_build_array(p_to), 'subject', p_subject,
+                 'html', p_html, 'reply_to', nullif(s->>'replyTo', ''))),
+    headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || key)
+  ) into rid;
+  return rid;
+end $$;
+
+create or replace function public.order_email_html(o public.orders)
+returns text language plpgsql stable security definer set search_path = public as $$
+declare
+  s jsonb; ar boolean := o.lang = 'ar'; site text; cur text; rows text := ''; it jsonb; opts text; pay text := '';
+  fmt text; due int;
+begin
+  select data into s from public.settings where id = 1;
+  site := rtrim(coalesce(nullif(s->>'siteUrl', ''), 'https://www.allure-boutique.org'), '/');
+  cur := case when ar then ' ج.م' else ' LE' end;
+  for it in select * from jsonb_array_elements(o.items) loop
+    opts := concat_ws(' · ', it->'opts'->>'color', it->'opts'->>'letter', it->'opts'->>'ringSize', it->'opts'->>'bagSize',
+              (select string_agg(x, ' + ') from jsonb_array_elements_text(coalesce(it->'opts'->'parts', '[]'::jsonb)) x));
+    rows := rows || '<tr><td style="padding:12px 0;border-bottom:1px solid #e8e0d2;font-size:14px;color:#1d1a16">'
+      || tg_esc(coalesce((select case when ar and name_ar <> '' then name_ar else name end from public.products where id = it->>'id'), it->>'name'))
+      || case when opts <> '' then '<div style="font-size:12px;color:#8a7f70;margin-top:3px">' || tg_esc(opts) || '</div>' else '' end
+      || '</td><td style="padding:12px 8px;border-bottom:1px solid #e8e0d2;font-size:13px;color:#6f665b;text-align:center">× ' || (it->>'qty')
+      || '</td><td style="padding:12px 0;border-bottom:1px solid #e8e0d2;font-size:14px;color:#1d1a16;text-align:' || case when ar then 'left' else 'right' end || ';white-space:nowrap">'
+      || to_char((it->>'unit')::int * (it->>'qty')::int, 'FM999,999,990') || cur || '</td></tr>';
+  end loop;
+
+  due := case when o.payment = 'instapay' then o.total when o.payment_status = 'awaiting' then o.delivery_fee else 0 end;
+  if o.payment_status = 'awaiting' and due > 0 then
+    pay := '<div style="background:#fbf6ea;border:1px solid #e3cf9f;padding:18px 20px;margin:22px 0;font-size:14px;line-height:1.7;color:#1d1a16">'
+      || case when ar then 'من فضلك حوّل <b>' else 'Please send <b>' end || to_char(due, 'FM999,999,990') || cur || '</b> '
+      || case when ar then 'عبر إنستاباي أو فودافون كاش إلى <b>' else 'via InstaPay or Vodafone Cash to <b>' end
+      || tg_esc(coalesce(s->>'instapay', '')) || '</b>'
+      || case when ar then '، ثم أرسل صورة التحويل على واتساب لتأكيد طلبك.' else ', then send the screenshot on WhatsApp to confirm your order.' end
+      || case when coalesce(s->>'instapayLink', '') <> '' then '<div style="margin-top:14px"><a href="' || tg_esc(s->>'instapayLink') || '" style="display:inline-block;background:#1d1a16;color:#fffdf9;text-decoration:none;padding:11px 20px;font-size:13px;font-weight:bold">' || case when ar then 'الدفع عبر رابط إنستاباي' else 'Pay with the InstaPay link' end || '</a></div>' else '' end
+      || case when coalesce(s->>'whatsapp', '') <> '' then '<div style="margin-top:10px"><a href="https://wa.me/' || tg_esc(s->>'whatsapp') || '" style="color:#9a7b3e;font-weight:bold">' || case when ar then 'افتح واتساب' else 'Open WhatsApp' end || ' ›</a></div>' else '' end
+      || '</div>';
+  end if;
+
+  return '<!doctype html><html lang="' || o.lang || '" dir="' || case when ar then 'rtl' else 'ltr' end || '"><body style="margin:0;background:#f4f0e9;font-family:Helvetica,Arial,sans-serif">'
+    || '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f0e9"><tr><td align="center" style="padding:28px 12px">'
+    || '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#fffdf9;border:1px solid #e8e0d2" dir="' || case when ar then 'rtl' else 'ltr' end || '">'
+    || '<tr><td align="center" style="padding:26px 24px 18px;border-bottom:1px solid #e8e0d2"><img src="' || site || '/assets/logo-light.png" alt="ALLURE Boutique" width="190" style="display:block;width:190px;max-width:70%;height:auto"></td></tr>'
+    || '<tr><td style="padding:30px 32px 8px;text-align:' || case when ar then 'right' else 'left' end || '">'
+    || '<div style="font-size:11px;letter-spacing:' || case when ar then '0' else '3px' end || ';color:#9a7b3e">' || case when ar then 'تأكيد الطلب' else 'ORDER CONFIRMATION' end || '</div>'
+    || '<h1 style="font-family:Georgia,''Times New Roman'',serif;font-weight:normal;font-size:28px;color:#1d1a16;margin:10px 0 6px">'
+    || case when ar then 'شكراً لك يا ' else 'Thank you, ' end || tg_esc(split_part(o.customer->>'name', ' ', 1)) || '</h1>'
+    || '<p style="font-size:14px;line-height:1.7;color:#6f665b;margin:0">' || case when ar then 'استلمنا طلبك وهو الآن قيد المراجعة حتى نؤكده.' else 'We''ve received your order. It stays pending until we confirm it.' end || '</p>'
+    || '<div style="margin:22px 0 4px;padding:16px 18px;border:1px dashed #b8964e;text-align:center"><div style="font-size:12px;color:#8a7f70">' || case when ar then 'رقم الطلب' else 'Your order number' end || '</div>'
+    || '<div style="font-family:Georgia,serif;font-size:30px;color:#9a7b3e;letter-spacing:1px;margin-top:4px">' || o.order_no || '</div>'
+    || '<div style="font-size:12px;color:#8a7f70;margin-top:6px">' || case when ar then 'احتفظ بهذا الرقم لتتبع طلبك' else 'Keep this number to track your order' end || '</div></div>'
+    || pay
+    || '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:18px">' || rows || '</table>'
+    || '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;font-size:14px;color:#6f665b">'
+    || '<tr><td style="padding:5px 0">' || case when ar then 'المجموع الفرعي' else 'Subtotal' end || '</td><td style="text-align:' || case when ar then 'left' else 'right' end || '">' || to_char(o.subtotal, 'FM999,999,990') || cur || '</td></tr>'
+    || case when o.discount > 0 then '<tr><td style="padding:5px 0">' || case when ar then 'الخصم' else 'Discount' end || '</td><td style="text-align:' || case when ar then 'left' else 'right' end || '">−' || to_char(o.discount, 'FM999,999,990') || cur || '</td></tr>' else '' end
+    || '<tr><td style="padding:5px 0">' || case when o.fulfil = 'pickup' then case when ar then 'استلام من الفرع' else 'Branch pickup' end else case when ar then 'التوصيل' else 'Delivery' end end || '</td><td style="text-align:' || case when ar then 'left' else 'right' end || '">'
+    || case when o.delivery_fee > 0 then to_char(o.delivery_fee, 'FM999,999,990') || cur else case when ar then 'مجاناً' else 'Free' end end || '</td></tr>'
+    || '<tr><td style="padding:12px 0 0;border-top:1px solid #e8e0d2;font-size:16px;color:#1d1a16"><b>' || case when ar then 'الإجمالي' else 'Total' end || '</b></td><td style="padding:12px 0 0;border-top:1px solid #e8e0d2;text-align:' || case when ar then 'left' else 'right' end || ';font-family:Georgia,serif;font-size:22px;color:#9a7b3e">' || to_char(o.total, 'FM999,999,990') || cur || '</td></tr></table>'
+    || '<p style="font-size:13px;line-height:1.7;color:#6f665b;margin:22px 0 0">' || case when o.fulfil = 'pickup' then case when ar then 'الاستلام من: ' else 'Pickup from: ' end else case when ar then 'التوصيل إلى: ' else 'Delivering to: ' end end || tg_esc(o.address) || '</p>'
+    || '<div style="text-align:center;margin:26px 0 30px"><a href="' || site || '/#/track/' || o.order_no || '" style="display:inline-block;background:#9a7b3e;color:#fffdf9;text-decoration:none;padding:14px 28px;font-size:13px;font-weight:bold;letter-spacing:' || case when ar then '0' else '2px' end || '">' || case when ar then 'تتبع طلبك' else 'TRACK YOUR ORDER' end || '</a></div>'
+    || '</td></tr>'
+    || '<tr><td style="padding:18px 24px;background:#f4f0e9;text-align:center;font-size:12px;line-height:1.7;color:#8a7f70">ALLURE Boutique · ' || tg_esc(case when ar and coalesce(s->>'address_ar', '') <> '' then s->>'address_ar' else coalesce(s->>'address', '') end)
+    || case when coalesce(s->>'whatsapp', '') <> '' then '<br><a href="https://wa.me/' || tg_esc(s->>'whatsapp') || '" style="color:#9a7b3e">WhatsApp</a>' else '' end
+    || '</td></tr></table></td></tr></table></body></html>';
+end $$;
+
+create or replace function public.order_email()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(new.customer->>'email', '') <> '' then
+    perform public.send_email(new.customer->>'email',
+      case when new.lang = 'ar' then 'تأكيد طلبك ' || new.order_no || ' — ألور بوتيك' else 'Your ALLURE order ' || new.order_no end,
+      public.order_email_html(new));
+  end if;
+  return new;
+exception when others then
+  return new;   -- an email problem must never block an order
+end $$;
+drop trigger if exists orders_email on public.orders;
+create trigger orders_email after insert on public.orders for each row execute function public.order_email();
+
+create or replace function public.admin_email_status()
+returns jsonb language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  return jsonb_build_object('key', exists (select 1 from vault.decrypted_secrets where name = 'resend_api_key'));
+end $$;
+
+create or replace function public.admin_test_email(p_to text)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare o public.orders%rowtype;
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  select * into o from public.orders order by created_at desc limit 1;
+  if not found then
+    o.order_no := 'AL00000'; o.lang := 'en'; o.customer := '{"name":"ALLURE Customer"}'; o.items := '[]';
+    o.subtotal := 0; o.discount := 0; o.delivery_fee := 0; o.total := 0; o.fulfil := 'pickup'; o.address := ''; o.payment := 'cod'; o.payment_status := 'not_required';
+  end if;
+  return public.send_email(p_to, 'Test: ALLURE order email (' || o.order_no || ')', public.order_email_html(o));
+end $$;
+
+-- permissions for the new functions
+revoke execute on function public.order_stock(jsonb, int)               from public, anon, authenticated;
+revoke execute on function public.send_email(text, text, text)          from public, anon, authenticated;
+revoke execute on function public.order_email()                         from public, anon, authenticated;
+revoke execute on function public.order_email_html(public.orders)       from public, anon, authenticated;
+revoke execute on function public.admin_edit_order(bigint, jsonb)       from public, anon;
+revoke execute on function public.admin_refund_order(bigint, int, boolean, text) from public, anon;
+revoke execute on function public.admin_delete_order(bigint, boolean)   from public, anon;
+revoke execute on function public.admin_customers()                     from public, anon;
+revoke execute on function public.admin_update_customer(uuid, jsonb)    from public, anon;
+revoke execute on function public.admin_block_phone(text, boolean, text) from public, anon;
+revoke execute on function public.admin_email_status()                  from public, anon;
+revoke execute on function public.admin_test_email(text)                from public, anon;
+revoke execute on function public.link_my_orders()                      from public, anon;
+grant  execute on function public.admin_edit_order(bigint, jsonb)       to authenticated;
+grant  execute on function public.admin_refund_order(bigint, int, boolean, text) to authenticated;
+grant  execute on function public.admin_delete_order(bigint, boolean)   to authenticated;
+grant  execute on function public.admin_customers()                     to authenticated;
+grant  execute on function public.admin_update_customer(uuid, jsonb)    to authenticated;
+grant  execute on function public.admin_block_phone(text, boolean, text) to authenticated;
+grant  execute on function public.admin_email_status()                  to authenticated;
+grant  execute on function public.admin_test_email(text)                to authenticated;
+grant  execute on function public.link_my_orders()                      to authenticated;
+grant  execute on function public.review_summary()                      to anon, authenticated;
+grant  update (size_chart) on public.products to authenticated;
