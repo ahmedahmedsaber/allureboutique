@@ -93,6 +93,7 @@ const API = {
     },
     async signIn(email, password) { return unwrap(await sb.auth.signInWithPassword({ email, password })); },
     async signOut() { await sb.auth.signOut(); },
+    async resendConfirm(email) { return unwrap(await sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: siteUrl() } })); },
     async resetPassword(email) { return unwrap(await sb.auth.resetPasswordForEmail(email, { redirectTo: siteUrl() })); },
     async updatePassword(password) { return unwrap(await sb.auth.updateUser({ password })); },
   },

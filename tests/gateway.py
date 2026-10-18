@@ -108,6 +108,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, user_obj(ur))
         if p == '/logout': return self.send(204)
         if p == '/recover': return self.send(200, {})
+        if p == '/resend': return self.send(200, {})
         return self.send(404, {'msg': 'auth route not faked: ' + p})
     def storage(self, m, u):
         p = u.path[len('/storage/v1'):]

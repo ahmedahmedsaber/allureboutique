@@ -287,6 +287,8 @@ with sync_playwright() as p:
     s.fill('#au-name', 'Fake Owner'); s.fill('#au-phone', '01099991111'); s.fill('#au-email', 'OWNER@allure.com'); s.fill('#au-password', 'secret123')
     s.click('form[data-form=auth] button[type=submit]'); s.wait_for_selector('form[data-form=auth] .form-err')
     ok('already exists' in s.locator('form[data-form=auth] .form-err').inner_text(), 'cannot make a customer account with the owner email')
+    s.click('[data-act=authResend]'); s.wait_for_selector('form[data-form=auth] .promo-msg')
+    ok('new link' in s.locator('form[data-form=auth] .promo-msg').inner_text(), 'customers can ask for a new confirmation email')
     # one account per phone number
     s.goto(BASE + '#/account'); s.click('[data-act=authMode][data-m=signup]')
     psql("update profiles set phone = '01027770000' where email = 'sara@allure.com'")

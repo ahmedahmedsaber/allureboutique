@@ -898,6 +898,7 @@ function viewAuth() {
         <div class="frm">${body}</div>
         ${a.msg ? `<div class="form-err">${esc(a.msg)}</div>` : ''}
         ${a.ok ? `<div class="promo-msg" style="margin:14px 0 0">${esc(a.ok)}</div>` : ''}
+        ${a.resend && m !== 'forgot' ? `<div style="margin-top:12px"><button type="button" class="link-btn" data-act="authResend">${t('RESEND CONFIRMATION EMAIL')}</button> <span class="muted" style="font-size:12px">${t('(the link works for a limited time)')}</span></div>` : ''}
         <button class="btn btn-gold btn-block" style="margin-top:22px" type="submit"${busyAttr(a.busy)}>${a.busy ? t('PLEASE WAIT…') : label}</button>
         <div style="text-align:center;margin-top:16px">${m === 'forgot'
           ? `<button type="button" class="link-btn" data-act="authMode" data-m="signin">${t('BACK TO SIGN IN')}</button>`
@@ -1183,6 +1184,13 @@ const ACTIONS = {
   },
   placeOrder,
   // account
+  authResend: async () => {
+    const a = S.ui.auth, email = (a.form.email || '').trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) { a.msg = t('Please enter a valid email.'); return render(); }
+    try { await API.auth.resendConfirm(email); a.msg = ''; a.ok = t('If this account still needs confirming, a new link is on its way to {email}.', { email }); }
+    catch (e) { a.msg = API.errMessage(e); }
+    render();
+  },
   authMode: el => { S.ui.auth = { mode: el.dataset.m, form: { email: S.ui.auth.form.email }, msg: '', ok: '', busy: false }; render(); },
   orderToggle: el => { S.ui.open[el.dataset.id] = !S.ui.open[el.dataset.id]; render(); },
   prevToggle: () => { S.ui.prevOpen = !S.ui.prevOpen; render(); },
@@ -1229,13 +1237,13 @@ const FORMS = {
   auth: async () => {
     const a = S.ui.auth, f = a.form;
     const pw = ($('#au-password') || {}).value || '';
-    a.msg = ''; a.ok = '';
+    a.msg = ''; a.ok = ''; a.resend = false;
     if (!/^\S+@\S+\.\S+$/.test(f.email || '')) { a.msg = t('Please enter a valid email.'); return render(); }
     if (a.mode === 'signup') {
       if (!(f.name || '').trim()) { a.msg = t('Please enter your name.'); return render(); }
       if (!PHONE_RE.test((f.phone || '').replace(/\s/g, ''))) { a.msg = t('Please enter a valid Egyptian mobile number (01xxxxxxxxx).'); return render(); }
       if (pw.length < 6) { a.msg = t('Your password needs at least 6 characters.'); return render(); }
-      try { if (!(await API.emailAvailable(f.email.trim()))) { a.msg = t('An account with this email already exists. Sign in, or use “Forgot password?”.'); return render(); } } catch (e) { /* checked again below */ }
+      try { if (!(await API.emailAvailable(f.email.trim()))) { a.msg = t('An account with this email already exists. Sign in, or use “Forgot password?”.'); a.resend = true; return render(); } } catch (e) { /* checked again below */ }
       try { if (!(await API.phoneAvailable(f.phone))) { a.msg = t('This phone number already belongs to another account. Sign in to that account, or use a different number.'); return render(); } } catch (e) { /* the database checks again */ }
     }
     if (a.mode === 'signin' && !pw) { a.msg = t('Please enter your password.'); return render(); }
@@ -1245,11 +1253,12 @@ const FORMS = {
       else if (a.mode === 'signup') {
         const r = await API.auth.signUp({ email: f.email.trim(), password: pw, name: f.name.trim(), phone: f.phone.replace(/\s/g, '') });
         // Supabase answers "ok" without creating anything when the email is already registered
-        if (r.user && Array.isArray(r.user.identities) && !r.user.identities.length) { a.msg = t('An account with this email already exists. Sign in, or use “Forgot password?”.'); a.busy = false; return render(); }
+        if (r.user && Array.isArray(r.user.identities) && !r.user.identities.length) { a.msg = t('An account with this email already exists. Sign in, or use “Forgot password?”.'); a.resend = true; a.busy = false; return render(); }
+        if (!r.session) a.resend = true;
         if (!r.session) a.ok = t('Almost there — we sent a confirmation link to {email}. Open it to activate your account.', { email: f.email.trim() });
         else toast(t('Welcome to ALLURE'));
       } else { await API.auth.resetPassword(f.email.trim()); a.ok = t('If an account exists for this email, a reset link is on its way.'); }
-    } catch (e) { a.msg = API.errMessage(e); }
+    } catch (e) { a.msg = API.errMessage(e); if (/Email not confirmed/i.test(e.message || '')) a.resend = true; }
     a.busy = false; render();
   },
   reset: async () => {

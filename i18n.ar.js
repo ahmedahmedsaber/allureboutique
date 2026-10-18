@@ -513,3 +513,8 @@ Object.assign(window.I18N_AR, {
   'Your own visits while signed in to this dashboard are not counted. To test a link, open it in a private / incognito window.': 'زياراتك أثناء تسجيل الدخول للوحة لا تُحتسب. لتجربة رابط، افتحه في نافذة خاصة (التصفح المتخفي).',
   '{who} deleted the account of {name}': '{who} حذف حساب {name}',
 });
+
+Object.assign(window.I18N_AR, {
+  'RESEND CONFIRMATION EMAIL': 'إعادة إرسال إيميل التأكيد', '(the link works for a limited time)': '(الرابط صالح لفترة محدودة)',
+  'If this account still needs confirming, a new link is on its way to {email}.': 'إذا كان الحساب ما زال يحتاج تأكيداً، فرابط جديد في الطريق إلى {email}.',
+});

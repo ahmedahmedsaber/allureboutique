@@ -1677,3 +1677,6 @@ $$;
 revoke execute on function public.admin_delete_user(uuid) from public, anon;
 grant  execute on function public.admin_delete_user(uuid) to authenticated;
 grant  execute on function public.email_available(text) to anon, authenticated;
+
+-- make the API see new functions straight away
+notify pgrst, 'reload schema';
